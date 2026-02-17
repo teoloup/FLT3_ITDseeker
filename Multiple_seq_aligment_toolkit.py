@@ -3,29 +3,18 @@ os.environ["MPLBACKEND"] = "Agg"       # disable any GUI backend
 os.environ["DISPLAY"] = ""             # make sure Tk can't open a window
 os.environ["TK_SILENCE_DEPRECATION"] = "1"
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import numpy as np
 import pandas as pd
-import argparse
 import logging
-import seaborn as sns
-import shutil
+import time
 import pymuscle5
-import base64
 import textwrap
-from collections import Counter
-from pathlib import Path
 from typing import Dict, List, Tuple
-from venv import logger
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from Bio import Align, SeqIO
 from Bio.Align import MultipleSeqAlignment
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
-from sklearn.mixture import GaussianMixture
-from scipy.stats import fisher_exact
-from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 def dedup_with_counts(seqs: List[str]) -> List[Tuple[str, int]]:
     # Count sequences case-insensitively but preserve first-seen order for
@@ -216,6 +205,7 @@ def build_itd_consensus_sequences(
     all_itd_insertions,
     comps,
     *,
+    sample_name=None,
     max_unique=200,
     min_weight_coverage=0.98,
     base_threshold=0.7,
@@ -254,6 +244,7 @@ def build_itd_consensus_sequences(
     results = []
 
     for _, row in comps.iterrows():
+        t0 = time.perf_counter()
         alias = row["peak_alias"]
         if alias.upper() == "WT":
             continue
@@ -273,6 +264,10 @@ def build_itd_consensus_sequences(
             seq_counts,
             max_unique=max_unique,
             min_weight_coverage=min_weight_coverage,
+        )
+        logger.info(
+            f"[build_itd_consensus_sequences] {alias}: total_reads={len(seqs)}, "
+            f"unique={len(seq_counts)}, panel_used={len(panel)}"
         )
 
         # --- Run MUSCLE alignment ---
@@ -304,6 +299,10 @@ def build_itd_consensus_sequences(
             "expected_itd_bp": mean_len,
             "sd_bp": row["sd_bp"],
         })
+        logger.info(
+            f"[build_itd_consensus_sequences] {alias}: consensus_len={len(consensus)}, "
+            f"elapsed={time.perf_counter() - t0:.2f}s"
+        )
 
     # --- Save summary ---
     df_cons = pd.DataFrame(results)

@@ -2,43 +2,45 @@ import os
 os.environ["MPLBACKEND"] = "Agg"       # disable any GUI backend
 os.environ["DISPLAY"] = ""             # make sure Tk can't open a window
 os.environ["TK_SILENCE_DEPRECATION"] = "1"
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-import numpy as np
 import pandas as pd
 import argparse
 import logging
-import seaborn as sns
 import shutil
-import pymuscle5
-import base64
-import textwrap
-from collections import Counter
+import sys
+import traceback
 from pathlib import Path
-from typing import Dict, List, Tuple
-from venv import logger
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from Bio import Align, SeqIO
-from Bio.Align import MultipleSeqAlignment
 from Bio.Seq import Seq
-from Bio.SeqRecord import SeqRecord
-from sklearn.mixture import GaussianMixture
-from scipy.stats import fisher_exact
-from datetime import datetime
 
 from bam_extractor import extract_flt3_reads
-from GMM_peaks import fit_gmm_itds, plot_gmm_itds
+from GMM_peaks import fit_gmm_itds, plot_gmm_itds, refine_peak_substructure_once
 from Pairwise_aligment_toolkit import align_reads_multi_ref_parallel
-from Write_output import export_itd_vcf, generate_itd_html_report, call_no_itd, generate_itd_html_report
+from Write_output import export_itd_vcf, generate_itd_html_report, call_no_itd
 from Helper_functions import extract_itd_insertions_from_subset_parallel, plot_itd_size_distribution, build_itd_reference_per_peak, make_validation_refs, prepare_validation_reads, calculate_allele_frequencies_and_strand_bias
 from Multiple_seq_aligment_toolkit import build_itd_consensus_sequences
 
-if __name__ == "__main__":
-    
+def install_unhandled_exception_logger():
+    """
+    Install a global exception hook so unexpected failures are logged clearly.
+    This is for true error conditions and does not emit negative/no-ITD outputs.
+    """
+    def _hook(exc_type, exc_value, exc_traceback):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+        logger = logging.getLogger()
+        tb = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)).rstrip()
+        logger.critical("=" * 90)
+        logger.critical("FATAL: Unhandled exception. Aborting run.")
+        logger.critical("No negative VCF/report is written for this error condition.")
+        logger.critical(f"Exception: {exc_type.__name__}: {exc_value}")
+        logger.critical("Traceback follows:\n%s", tb)
+        logger.critical("=" * 90)
 
+    sys.excepthook = _hook
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="place holder"
+        description="Detect and validate FLT3-ITD events from Nanopore amplicon BAM files."
     )
     parser.add_argument(
         "-b", "--bam", type=str, required=True, help="Path to input BAM file."   
@@ -89,6 +91,36 @@ if __name__ == "__main__":
         "--min-gmm-peak-distance", type=int, default=10, help="Minimum distance between GMM peaks (default: 10).",
     )
     parser.add_argument(
+        "--disable-subpeak-refinement", action="store_true", help="Disable one-level local refinement of each initial ITD peak."
+    )
+    parser.add_argument(
+        "--min-reads-for-subpeak-refinement", type=int, default=150, help="Minimum reads in a parent peak to attempt one-level subpeak refinement (default: 150)."
+    )
+    parser.add_argument(
+        "--min-subpeak-fraction", type=float, default=0.15, help="Minimum fraction per child subpeak when splitting a parent peak (default: 0.15)."
+    )
+    parser.add_argument(
+        "--min-subpeak-distance", type=float, default=3.0, help="Minimum distance (bp) between child means to keep a split (default: 3.0)."
+    )
+    parser.add_argument(
+        "--max-subpeak-sd", type=float, default=5.0, help="Maximum SD (bp) for each child subpeak in refinement (default: 5.0)."
+    )
+    parser.add_argument(
+        "--min-bic-gain-for-subpeak-split", type=float, default=10.0, help="Minimum BIC gain (k=1 minus k=2) to accept a local split (default: 10.0)."
+    )
+    parser.add_argument(
+        "--msa-max-unique", type=int, default=300, help="Maximum unique insertion sequences used per peak for MSA consensus (default: 300)."
+    )
+    parser.add_argument(
+        "--msa-min-weight-coverage", type=float, default=0.98, help="Minimum cumulative weight coverage when selecting insertion panel for MSA (default: 0.98)."
+    )
+    parser.add_argument(
+        "--msa-base-threshold", type=float, default=0.7, help="Minimum weighted base fraction to emit a non-ambiguous base in consensus (default: 0.7)."
+    )
+    parser.add_argument(
+        "--msa-min-col-coverage", type=float, default=0.7, help="Minimum weighted non-gap coverage required to keep an MSA column in consensus (default: 0.7)."
+    )
+    parser.add_argument(
         "--max-peak-sd", type=float, default=5.0, help="Maximum standard deviation for GMM peaks (default: 5.0).",
     )
     parser.add_argument(
@@ -118,8 +150,9 @@ if __name__ == "__main__":
         handler.setFormatter(logging.Formatter(
         "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
         ))
-    logger.addHandler(handler)
+        logger.addHandler(handler)
     logging.getLogger("matplotlib").setLevel(logging.WARNING)
+    install_unhandled_exception_logger()
     
     
     # Read args and declare variables
@@ -134,7 +167,17 @@ if __name__ == "__main__":
     min_allele_frequency = args.min_allele_frequency
     min_gmm_fraction = args.min_gmm_fraction
     max_peak_sd = args.max_peak_sd
-    min_ggmm_peak_distance = args.min_gmm_peak_distance
+    min_gmm_peak_distance = args.min_gmm_peak_distance
+    enable_subpeak_refinement = not args.disable_subpeak_refinement
+    min_reads_for_subpeak_refinement = args.min_reads_for_subpeak_refinement
+    min_subpeak_fraction = args.min_subpeak_fraction
+    min_subpeak_distance = args.min_subpeak_distance
+    max_subpeak_sd = args.max_subpeak_sd
+    min_bic_gain_for_subpeak_split = args.min_bic_gain_for_subpeak_split
+    msa_max_unique = args.msa_max_unique
+    msa_min_weight_coverage = args.msa_min_weight_coverage
+    msa_base_threshold = args.msa_base_threshold
+    msa_min_col_coverage = args.msa_min_col_coverage
     min_mapq = args.min_mapping_quality
     min_read_length = args.min_read_length
     wt_amplicon_length = args.wt_amplicon_length
@@ -178,26 +221,23 @@ if __name__ == "__main__":
     logger.info(f"Max ITD size: {max_itd_length}")
     logger.info(f"Max ITDs to detect: {max_itds_detected}")
     logger.info(f"Min GMM fraction: {min_gmm_fraction}")
-    logger.info(f"Min allele frequency of ITD: {min_gmm_fraction}")
+    logger.info(f"Min allele frequency of ITD: {min_allele_frequency}")
     logger.info(f"Force number of peaks: {force_k}")
     logger.info(f"Max STD of peaks: {max_peak_sd}")
     logger.info(f"Method to assign reads to peaks: {peak_read_assignment_mode}")
+    logger.info(f"Subpeak refinement enabled: {enable_subpeak_refinement}")
+    logger.info(f"MSA max unique panel size: {msa_max_unique}")
     logger.info(f"Number of threads requested: {threads}")
     logger.debug(f"Temp directory path: {temp_dir}")
 
-    ################################# HARD CODED VARIABLES ##############################################################################################################
-    #####################################################################################################################################################################
+    # FLT3 reference amplicon and genomic coordinates used by the pipeline.
     DEFAULT_REF_WT = """CTGTACCTTTCAGCATTTTGACGGCAACCTGGATTGAGACTCCTGTTTTGCTAATTCCATAAGCTGTTGCGTTCATCACTTTTCCAAAAGCACCTGATCCTAGTACCTTCCCTGCAAAGACAAATGGTGAGTACGTGCATTTTAAAGATTTTCCAATGGAAAAGAAATGCTGCAGAAACATTTGGCACATTCCATTCTTACCAAACTCTAAATTTTCTCTTGGAAACTCCCATTTGAGATCATATTCATATTCTCTGAAATCAACGTAGAAGTACTCATTATCTGAGGAGCCGGTCACCTGTACCATCTGTAGCTGGCTTTCATACCTAAATTGCT"""
     ref_seq = Seq(DEFAULT_REF_WT)
 
-    forward_primer: str = 'AGCAATTTAGGTATGAAAGCCAGC'
-    reverse_primer: str = 'CTGTACCTTTCAGCATTTTGACG'
-    cutadapt_error_rate: float = 0.20
     amplicon_coords = {
     "hg19": {"chr": "chr13", "start": 28608018, "end": 28608353},
     "hg38": {"chr": "chr13", "start": 28033881, "end": 28034216},
     }
-    chromosome: str = 'chr13'
     flt3_exons_hg38 = [
     (28003273, 28004174),(28014451, 28014557),(28015156, 28015256),(28015589, 28015701),(28018466, 28018589),(28023349, 28023477),(28024860, 28024943),(28027087, 28027241),
     (28028177, 28028288),(28033886, 28033991),(28034081, 28034214),(28034300, 28034407),(28035494, 28035673),(28035934, 28036043),(28037184, 28037288),(28048274, 28048443),
@@ -212,44 +252,85 @@ if __name__ == "__main__":
 
     if genome == 'hg38':
         exon_boundaries = flt3_exons_hg38
-        start = amplicon_coords['hg38']['start']
-        end = amplicon_coords['hg38']['end']
     elif genome == 'hg19':
         exon_boundaries = flt3_exons_hg19
-        start = amplicon_coords['hg19']['start']
-        end = amplicon_coords['hg19']['end']
     else:
         logger.error(f"Unsupported genome build: {genome}")
         quit(1)
     exon_labels = [f"Ex{idx+1}" for idx in range(len(exon_boundaries))]
 
-    #####################################################################################################################################################################
-    #################################################### MAIN PIPELINE CALL #################################################################################################################
-
     # Extract FLT3 reads
-    seqio_reads , trimmed_fastq = extract_flt3_reads(
-        bam_file=bam_file,
-        genome_build=genome,
-        threads=threads,
-        min_mapping_quality = min_mapq,
-        min_length = min_read_length,
-        max_itd_length = max_itd_length,
-        wt_amplicon_length = wt_amplicon_length,
-        temp_dir = temp_dir
-    )
+    try:
+        seqio_reads , trimmed_fastq = extract_flt3_reads(
+            bam_file=bam_file,
+            genome_build=genome,
+            threads=threads,
+            min_mapping_quality = min_mapq,
+            min_length = min_read_length,
+            max_itd_length = max_itd_length,
+            wt_amplicon_length = wt_amplicon_length,
+            temp_dir = temp_dir
+        )
+    except FileNotFoundError as e:
+        logger.error(f"Required external tool not found: {e}")
+        logger.error("Aborting without writing negative (no-ITD) outputs.")
+        quit(1)
+    except Exception as e:
+        logger.error(f"Read extraction/trimming failed: {e}")
+        logger.error("Aborting without writing negative (no-ITD) outputs.")
+        quit(1)
 
-    # Fit GMM and get back the peaks (comps) the model gmm , a dataframe of the reads and a dictionary that contains per peak (ITD_1 , ITD_2 etc) a list of the read_ids that belong to them 
-    gmm, comps, reads_df, peak_subsets = fit_gmm_itds(
-        seqio_reads,
-        assign_mode=peak_read_assignment_mode,
-        prob_threshold=prob_threshold,
-        assign_width_factor=2.0,
-        min_gmm_fraction=min_gmm_fraction,
-        max_peak_sd=max_peak_sd,
-        max_itds_detected=max_itds_detected,
-        min_ggmm_peak_distance=min_ggmm_peak_distance,
-        force_k=force_k
-    )
+    if not seqio_reads:
+        logger.warning("No FLT3 reads available after extraction/trimming.")
+        call_no_itd(sample_name, genome, seqio_reads, output_folder, flt3_data_folder, temp_dir, html_report, logger, remove_intermediate_files)
+        logger.info("Exiting program with empty outputs (no reads available for ITD detection).")
+        quit(0)
+
+    try:
+        gmm_fit = fit_gmm_itds(
+            seqio_reads,
+            assign_mode=peak_read_assignment_mode,
+            prob_threshold=prob_threshold,
+            assign_width_factor=2.0,
+            min_gmm_fraction=min_gmm_fraction,
+            max_peak_sd=max_peak_sd,
+            max_itds_detected=max_itds_detected,
+            min_ggmm_peak_distance=min_gmm_peak_distance,
+            force_k=force_k
+        )
+    except RuntimeError as e:
+        if "No GMM components passed filtering criteria" in str(e):
+            logger.warning(str(e))
+            call_no_itd(sample_name, genome, seqio_reads, output_folder, flt3_data_folder, temp_dir, html_report, logger, remove_intermediate_files)
+            logger.info("Exiting program with empty outputs (no valid GMM components).")
+            quit(0)
+        logger.error(f"GMM fitting failed: {e}")
+        logger.error("Aborting without writing negative (no-ITD) outputs.")
+        quit(1)
+    except Exception as e:
+        logger.error(f"GMM fitting failed: {e}")
+        logger.error("Aborting without writing negative (no-ITD) outputs.")
+        quit(1)
+    gmm = gmm_fit.gmm
+    comps = gmm_fit.comps
+    reads_df = gmm_fit.reads_df
+    peak_subsets = gmm_fit.peak_subsets
+
+    if enable_subpeak_refinement:
+        logger.info("Running one-level per-peak substructure refinement...")
+        refine_result = refine_peak_substructure_once(
+            comps=comps,
+            reads_df=reads_df,
+            peak_subsets=peak_subsets,
+            min_reads_for_refinement=min_reads_for_subpeak_refinement,
+            min_child_fraction=min_subpeak_fraction,
+            min_subpeak_distance=min_subpeak_distance,
+            max_subpeak_sd=max_subpeak_sd,
+            min_bic_gain_for_split=min_bic_gain_for_subpeak_split,
+        )
+        comps = refine_result.comps
+        reads_df = refine_result.reads_df
+        peak_subsets = refine_result.peak_subsets
 
        
     logger.debug("Fitted GMM components (filtered):")
@@ -275,12 +356,12 @@ if __name__ == "__main__":
 
     #check if only WT peak is detected if yes then print no itd found write vcf and html and exit
     if comps.shape[0] == 1 and comps['peak_alias'].iloc[0].upper() == 'WT':
-        call_no_itd(sample_name, genome, seqio_reads, output_folder, flt3_data_folder, temp_dir, html_report, remove_intermediate_files)
+        call_no_itd(sample_name, genome, seqio_reads, output_folder, flt3_data_folder, temp_dir, html_report, logger, remove_intermediate_files)
         logger.info("Exiting program as no ITD peaks were detected.")
         quit(0)
         
 
-#process per peak reads to get the itd sequences and postion per read
+    # Process per-peak reads and collect insertion calls.
     all_itd_insertions = []
 
     for alias, read_ids in peak_subsets.items():  # list of IDs per GMM peak
@@ -299,6 +380,10 @@ if __name__ == "__main__":
         logger.debug(df_itd)
         all_itd_insertions.append(df_itd)
 
+    if not all_itd_insertions:
+        logger.warning("No ITD insertions were detected after peak processing. Exiting.")
+        call_no_itd(sample_name, genome, seqio_reads, output_folder, flt3_data_folder, temp_dir, html_report, logger, remove_intermediate_files)
+        quit(0)
     insertions_df = pd.concat(all_itd_insertions, ignore_index=True)
     logger.debug("Per-read insertion found (first 20 reads):")
     logger.debug(insertions_df[:20])
@@ -308,7 +393,7 @@ if __name__ == "__main__":
     insertions_df.to_csv(insertions_file, sep="\t", index=False)
     logger.info(f"Saved ITD insertions table: {insertions_file}")
 
-    # Create ITD size distribution plot ------REMEBER TO DO IT PER PEAK AND FOR ALL TOGETHER ---------------
+    # Create ITD size distribution plot.
     logger.info("Creating ITD size distribution plot...")
     plot_itd_size_distribution(
         all_itd_insertions=insertions_df,
@@ -322,10 +407,11 @@ if __name__ == "__main__":
     all_itd_insertions=insertions_df,
     comps=comps,
     out_dir=flt3_data_folder,
-    max_unique=300,
-    min_weight_coverage=0.98,
-    base_threshold=0.7,
-    min_col_coverage=0.7,
+    sample_name=sample_name,
+    max_unique=msa_max_unique,
+    min_weight_coverage=msa_min_weight_coverage,
+    base_threshold=msa_base_threshold,
+    min_col_coverage=msa_min_col_coverage,
     ambiguous="N",
     )   
 
@@ -374,7 +460,12 @@ if __name__ == "__main__":
 
     # Align reads to multi-FASTA in parallel
     logger.info("Aligning reads to multi-reference FASTA in parallel...")
-    validation_results = align_reads_multi_ref_parallel(reads_df, ref_dict, df_cons, logger=logger, threads=threads)
+    validation_results = align_reads_multi_ref_parallel(val_reads, ref_dict, df_cons, logger=logger, threads=threads)
+    if validation_results is None or validation_results.empty:
+        logger.warning("No validation alignments were produced.")
+        call_no_itd(sample_name, genome, seqio_reads, output_folder, flt3_data_folder, temp_dir, html_report, logger, remove_intermediate_files)
+        logger.info("Exiting program with empty outputs (no valid reads for validation).")
+        quit(0)
     logger.info("Validation alignment completed.")
     logger.debug("Validation alignment results (first 20 reads):")
     logger.debug(validation_results.iloc[0:20,3:])
@@ -404,7 +495,6 @@ if __name__ == "__main__":
             output_dir=output_folder,
             plots_dir=flt3_data_folder,
             )
-   
 
     # Cleanup temp directory and intermediate files, if log is debug, keep all files
     if os.path.exists(temp_dir):

@@ -2,30 +2,14 @@ import os
 os.environ["MPLBACKEND"] = "Agg"       # disable any GUI backend
 os.environ["DISPLAY"] = ""             # make sure Tk can't open a window
 os.environ["TK_SILENCE_DEPRECATION"] = "1"
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import numpy as np
 import pandas as pd
-import argparse
 import logging
-import seaborn as sns
 import shutil
-import pymuscle5
 import base64
-import textwrap
-from collections import Counter
-from pathlib import Path
-from typing import Dict, List, Tuple
-from venv import logger
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from Bio import Align, SeqIO
-from Bio.Align import MultipleSeqAlignment
-from Bio.Seq import Seq
-from Bio.SeqRecord import SeqRecord
-from sklearn.mixture import GaussianMixture
-from scipy.stats import fisher_exact
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 
 def export_itd_vcf(summary_df, ref_dict, itd_refs, comps, output_path):
@@ -57,15 +41,14 @@ def export_itd_vcf(summary_df, ref_dict, itd_refs, comps, output_path):
 ##INFO=<ID=DP,Number=1,Type=Integer,Description="Total read depth">
 ##INFO=<ID=AF_GMM,Number=1,Type=Float,Description="Allele frequency from GMM clustering">
 ##INFO=<ID=AF_FITTED,Number=1,Type=Float,Description="Allele frequency from fitted model">
-##INFO=<ID=AF_VALIDATED,Number=1,Type=Float,Description="Validated allele frequency">
-##INFO=<ID=SB_PVAL,Number=1,Type=Float,Description="Strand bias Fisher exact p-value">
+##INFO=<ID=FISHER_P,Number=1,Type=Float,Description="Fisher exact test p-value for strand bias">
 ##INFO=<ID=ITD_LEN,Number=1,Type=Integer,Description="Length of ITD insertion">
 ##INFO=<ID=INS_POS,Number=1,Type=Integer,Description="Insertion position on reference genome">
 ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
 ##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Total depth">
 ##FORMAT=<ID=AF,Number=1,Type=Float,Description="Allele frequency (validated)">
 ##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths for the ref and alt alleles">
-##FORMAT=<ID=SB,Number=1,Type=Float,Description="Strand bias p-value">
+##FORMAT=<ID=SB,Number=1,Type=String,Description="ITD-supporting strand counts as plus,minus">
 #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE"""
 
     vcf_lines = [vcf_header]
@@ -78,11 +61,19 @@ def export_itd_vcf(summary_df, ref_dict, itd_refs, comps, output_path):
             continue
 
         ref_info = ref_dict[itd]
-        ref_seq = str(ref_info["ref_seq_with_itd"])
+        wt_seq = str(ref_dict.get("WT", {}).get("ref_seq_with_itd", ""))
         chr_name = ref_info.get("chr", "chrNA")
-        pos = ref_info.get("genomic_insertion_pos", 0)
-        alignment_pos = ref_info.get("local_insertion_pos", 0)
-        ref_base = ref_seq[alignment_pos - 1] if 0 < alignment_pos <= len(ref_seq) else "N"
+        pos_raw = itd_refs[itd].get("genomic_insertion_pos", ref_info.get("genomic_insertion_pos", 0))
+        pos = int(pos_raw) if pd.notna(pos_raw) else 0
+        alignment_pos = itd_refs[itd].get("local_insertion_pos", ref_info.get("local_insertion_pos"))
+        if pd.notna(alignment_pos):
+            alignment_pos = int(alignment_pos)
+        ref_base = wt_seq[alignment_pos - 1] if wt_seq and isinstance(alignment_pos, int) and 0 < alignment_pos <= len(wt_seq) else "N"
+        if ref_base == "N":
+            logger.warning(
+                f"[export_itd_vcf] REF base fallback to N for {itd}: "
+                f"local_insertion_pos={alignment_pos}, wt_len={len(wt_seq)}, pos={pos}"
+            )
         alt_seq = itd_refs[itd].get("itd_seq", "N")
         itd_len = ref_info.get("itd_length", len(alt_seq))
 
@@ -92,6 +83,10 @@ def export_itd_vcf(summary_df, ref_dict, itd_refs, comps, output_path):
         ad_ref = max(dp - ad_alt, 0)
         af_val = float(row.get("allele_frequency", 0.0))
         sb_pval = row.get("fisher_p", np.nan)
+        plus_raw = row.get("plus_reads", 0)
+        minus_raw = row.get("minus_reads", 0)
+        plus_reads = int(plus_raw) if pd.notna(plus_raw) else 0
+        minus_reads = int(minus_raw) if pd.notna(minus_raw) else 0
 
         # --- GMM-derived frequencies ---
         af_gmm = comps.loc[comps["peak_alias"] == itd, "effective_allele_freq"].iloc[0] if itd in comps["peak_alias"].values else np.nan
@@ -104,8 +99,7 @@ def export_itd_vcf(summary_df, ref_dict, itd_refs, comps, output_path):
             "DP": dp,
             "AF_GMM": round(af_gmm, 5) if not pd.isna(af_gmm) else ".",
             "AF_FITTED": round(af_fit, 5) if not pd.isna(af_fit) else ".",
-            "AF_VALIDATED": round(af_val, 5),
-            "SB_PVAL": round(sb_pval, 5) if not pd.isna(sb_pval) else ".",
+            "FISHER_P": round(sb_pval, 5) if not pd.isna(sb_pval) else ".",
             "ITD_LEN": itd_len,
             "INS_POS": pos
         }
@@ -114,8 +108,8 @@ def export_itd_vcf(summary_df, ref_dict, itd_refs, comps, output_path):
         # --- FORMAT and SAMPLE ---
         gt = "0/1"
         format_str = "GT:DP:AF:AD:SB"
-        sb_val = round(sb_pval, 5) if not pd.isna(sb_pval) else "."
-        sample_str = f"{gt}:{dp}:{af_val:.4f}:{ad_ref},{ad_alt}:{sb_val}"
+        sb_counts = f"{plus_reads},{minus_reads}"
+        sample_str = f"{gt}:{dp}:{af_val:.4f}:{ad_ref},{ad_alt}:{sb_counts}"
 
         vcf_line = f"{chr_name}\t{pos}\t{itd}\t{ref_base}\t{alt_seq}\t.\tPASS\t{info_str}\t{format_str}\t{sample_str}"
         vcf_lines.append(vcf_line)
@@ -277,7 +271,9 @@ img {{
     logger.info(f"[generate_itd_html_report] Wrote HTML report: {html_path}")
     return html_path
 
-def call_no_itd(sample_name, genome, seqio_reads, output_folder, flt3_data_folder, temp_dir, html_report, logger, remove_intermediate_files):
+def call_no_itd(sample_name, genome, seqio_reads, output_folder, flt3_data_folder, temp_dir, html_report, logger=None, remove_intermediate_files=False):
+        if logger is None:
+            logger = logging.getLogger(__name__)
             # Create empty VCF
         vcf_path = f"{sample_name}_FLT3_ITD_calls.vcf"
         output_path = os.path.join(output_folder, vcf_path)
@@ -291,17 +287,15 @@ def call_no_itd(sample_name, genome, seqio_reads, output_folder, flt3_data_folde
                         ##INFO=<ID=DP,Number=1,Type=Integer,Description="Total read depth">
                         ##INFO=<ID=AF_GMM,Number=1,Type=Float,Description="Allele frequency from GMM clustering">
                         ##INFO=<ID=AF_FITTED,Number=1,Type=Float,Description="Allele frequency from fitted model">
-                        ##INFO=<ID=AF_VALIDATED,Number=1,Type=Float,Description="Validated allele frequency">
-                        ##INFO=<ID=SB_PVAL,Number=1,Type=Float,Description="Strand bias Fisher exact p-value">
+                        ##INFO=<ID=FISHER_P,Number=1,Type=Float,Description="Fisher exact test p-value for strand bias">
                         ##INFO=<ID=ITD_LEN,Number=1,Type=Integer,Description="Length of ITD insertion">
                         ##INFO=<ID=INS_POS,Number=1,Type=Integer,Description="Insertion position on reference genome">
                         ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
                         ##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Total depth">
                         ##FORMAT=<ID=AF,Number=1,Type=Float,Description="Allele frequency (validated)">
                         ##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths for the ref and alt alleles">
-                        ##FORMAT=<ID=SB,Number=1,Type=Float,Description="Strand bias p-value">
+                        ##FORMAT=<ID=SB,Number=1,Type=String,Description="ITD-supporting strand counts as plus,minus">
                         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE""")
-            vcf.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
             # no variants added
         logger.info(f"Empty VCF written: {output_path}")
         if html_report:
@@ -309,6 +303,11 @@ def call_no_itd(sample_name, genome, seqio_reads, output_folder, flt3_data_folde
             output_path = os.path.join(output_folder, html_name)
 
             gmm_plot = img_to_base64(os.path.join(flt3_data_folder, f"{sample_name}_itd_gmm_fit_plot.png"))
+            gmm_plot_block = (
+                f'<img src="{gmm_plot}" alt="GMM fit plot">'
+                if gmm_plot
+                else "<p><i>WT peak plot not available (pipeline ended before GMM plotting).</i></p>"
+            )
             html = f"""
                         <!DOCTYPE html>
                         <html lang="en">
@@ -337,7 +336,7 @@ def call_no_itd(sample_name, genome, seqio_reads, output_folder, flt3_data_folde
                     <div class="flex-row">
                         <div class="plot-box">
                         <h3>Read Distribution and GMM Fit</h3>
-                        <img src="{gmm_plot}" alt="GMM fit plot">
+                        {gmm_plot_block}
                         </div>
                     </div>
                     </div>

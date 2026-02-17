@@ -7,12 +7,9 @@ Extracts reads mapping to FLT3 region and performs primer trimming
 import logging
 import pysam
 from pathlib import Path
-from typing import List, Dict, Tuple
-from dataclasses import dataclass
+from typing import Dict, Tuple
 from Bio.Seq import Seq
 from Bio import SeqIO
-from Bio.SeqRecord import SeqRecord
-import tempfile
 import subprocess
 import os
 import shutil
@@ -74,7 +71,7 @@ class FLT3ReadExtractor:
     def extract_reads(self):
         """Extract reads mapping to FLT3 region using samtools view + fastq, the fastq file"""
         try:
-            temp_dir = Path(str(self.temp_dir))  # Ensure temp_dir is a Path object
+            temp_dir = Path(str(self.temp_dir))
             logger.debug(f"Creating output folder: {temp_dir}")
             temp_dir.mkdir(parents=True, exist_ok=True)
             logger.debug(f"Output folder: {temp_dir}")
@@ -88,9 +85,9 @@ class FLT3ReadExtractor:
         # Compose samtools view (region + quality filter) piped to samtools fastq
         samtools_view_cmd = [
             "samtools", "view",
-            "-h",  # include header so samtools fastq works
-            "--threads", str(threads), #threads to use
-            "-F", "4",  # skip unmapped, secondary, supplementary
+            "-h",
+            "--threads", str(threads),
+            "-F", "4",
             "-q", str(self.min_mapping_quality),
             self.bam_file,
             region
@@ -120,13 +117,11 @@ class FLT3ReadExtractor:
         threads = self.threads
         amplicon_length = self.wt_amplicon_length
         min_length = self.min_length
-        fwd = self.config.forward_primer
-        rev = str(Seq(self.config.reverse_primer).reverse_complement())
+        rev = self.config.reverse_primer
+        fwd = str(Seq(self.config.forward_primer).reverse_complement())
 
         logger.debug(f"Using {threads} threads for cutadapt")
 
-        # Prepare temporary files
-        #temp_dir = tempfile.mkdtemp(prefix="flt3_cutadapt_")
         fastq_in = fastq
         fastq_out = Path(self.temp_dir) / "trimmed.fastq"
         logger.debug(f"Trimmed FASTQ output: {fastq_out}")
@@ -137,39 +132,48 @@ class FLT3ReadExtractor:
         # This keeps the amplicon (including primers) and removes flanking sequences
         cutadapt_cmd = [
             "cutadapt",
-            "-g", f"{fwd}...{rev};rightmost",  # linked adapters: find forward then reverse
+            "-g", f"{rev}...{fwd};rightmost",
             "-e", str(error_rate),
-            "-j", str(threads),  # number of parallel jobs
-            "-m", str(min_length),  # min length after trimming
-            "--rc",  # reverse complement search also
-            "--discard-untrimmed",  # discard reads without both primers
-            "--action=retain",  # keep primer sequences
-            "--maximum-length", str(amplicon_length + int(self.max_itd_length * 1.1)),  # amplicon + max ITD + 10% buffer size
+            "-j", str(threads),
+            "-m", str(min_length),
+            "--rc",
+            "--discard-untrimmed",
+            "--action=retain",
+            "--maximum-length", str(amplicon_length + int(self.max_itd_length * 1.1)),
             "-o", trimmed_fastq,
             fastq_in
         ]
 
         logger.info(f"Running cutadapt for primer trimming: {' '.join(cutadapt_cmd)}")
-        logger.debug(f"Full cutadapt command: {cutadapt_cmd}")  # Debug the actual command list
+        logger.debug(f"Full cutadapt command: {cutadapt_cmd}")
         result = subprocess.run(cutadapt_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if result.returncode != 0:
             logger.error(f"Cutadapt failed: {result.stderr.decode()}")
-            shutil.rmtree(temp_dir)
+            if self.temp_dir and os.path.exists(self.temp_dir):
+                shutil.rmtree(self.temp_dir)
             raise RuntimeError("Cutadapt failed for primer trimming.")
 
         # Parse trimmed FASTQ
-        trimmed_records = []
         untrimmed_reads = list(SeqIO.parse(fastq_in, "fastq"))
         trimmed_reads = list(SeqIO.parse(trimmed_fastq, "fastq"))
+        reads: Dict[str, Dict[str, str]] = {}
         for rec in SeqIO.parse(trimmed_fastq, "fastq"):
-            if rec.description.endswith(" rc"):
-             rec.id = rec.id.replace(" rc", "")
-             rec.seq = rec.seq.reverse_complement()
-            trimmed_records.append(rec)
-
-        reads = {rec.id: str(rec.seq) for rec in trimmed_records}
+            strand = "-" if rec.description.endswith(" rc") else "+"
+            rec_id = rec.id.replace(" rc", "")
+            # Keep cutadapt sequence orientation as output, store original orientation via strand tag.
+            reads[rec_id] = {"seq": str(rec.seq), "strand": strand}
 
         logger.info(f"Cutadapt trimmed {len(trimmed_reads)} reads (input: {len(untrimmed_reads)})")
+        plus_count = sum(1 for v in reads.values() if v["strand"] == "+")
+        minus_count = len(reads) - plus_count
+        total_count = len(reads)
+        if total_count > 0:
+            logger.info(
+                "[trim_primers] Strand tags in processed reads: "
+                f"+={plus_count} ({100.0 * plus_count / total_count:.1f}%), "
+                f"-={minus_count} ({100.0 * minus_count / total_count:.1f}%), "
+                f"total={total_count}"
+            )
         # Do not delete temp_dir here; FASTQ is needed for validation
         return trimmed_fastq, reads
     
@@ -181,12 +185,11 @@ class FLT3ReadExtractor:
         return trimmed_reads, trimmed_flt3_fastq
 
 def extract_flt3_reads(bam_file: str, genome_build: str , threads: int ,
-                      min_mapping_quality: int , min_length: int , max_itd_length: int , wt_amplicon_length: int , temp_dir: str , config=None) -> Tuple[List[Dict], str]:
+                      min_mapping_quality: int , min_length: int , max_itd_length: int , wt_amplicon_length: int , temp_dir: str , config=None) -> Tuple[Dict[str, Dict[str, str]], str]:
     """Main function to extract and process FLT3 reads, using main config if provided.
     Returns processed_reads and the trimmed FASTQ file path for centralized cleanup."""
 
 
     extractor = FLT3ReadExtractor(bam_file, genome_build, min_mapping_quality, threads = threads, min_length=min_length, max_itd_length=max_itd_length, wt_amplicon_length=wt_amplicon_length, temp_dir=temp_dir, config=config)
     processed_reads, fastq_file = extractor.process_reads()
-    #shutil.rmtree(temp_dir) wait to decide wether i return a dict or the fastq, if debug keep temp
     return processed_reads, fastq_file

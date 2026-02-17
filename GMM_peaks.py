@@ -1,14 +1,27 @@
 import os
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import numpy as np
 import pandas as pd
 import logging
 import seaborn as sns
 from collections import Counter
-from venv import logger
+from typing import NamedTuple, Dict, List
 from sklearn.mixture import GaussianMixture
-from collections import Counter
+
+logger = logging.getLogger(__name__)
+
+
+class GMMFitResult(NamedTuple):
+    gmm: GaussianMixture
+    comps: pd.DataFrame
+    reads_df: pd.DataFrame
+    peak_subsets: Dict[str, List[str]]
+
+
+class PeakRefineResult(NamedTuple):
+    comps: pd.DataFrame
+    reads_df: pd.DataFrame
+    peak_subsets: Dict[str, List[str]]
 
 def fit_gmm_itds(
     reads_dict,
@@ -40,8 +53,17 @@ def fit_gmm_itds(
     """
 
     # --- Step 1: Prepare data ---
-    data = [(rid, seq, len(seq)) for rid, seq in reads_dict.items()]
-    df = pd.DataFrame(data, columns=["read_id", "read_seq", "read_len"])
+    data = []
+    for rid, entry in reads_dict.items():
+        if isinstance(entry, dict):
+            seq = entry.get("seq", "")
+            strand = entry.get("strand", "+")
+        else:
+            # Backward compatibility with older {read_id: seq} format.
+            seq = entry
+            strand = "+"
+        data.append((rid, seq, strand, len(seq)))
+    df = pd.DataFrame(data, columns=["read_id", "read_seq", "strand", "read_len"])
     X = df["read_len"].to_numpy(dtype=float).reshape(-1, 1)
     n = len(X)
 
@@ -227,7 +249,210 @@ def fit_gmm_itds(
         for i in comps["peak_alias"].unique()
     }
     logger.debug(f"df columns: {df.columns.tolist()}")
-    return gmm, comps, df, subsets
+    return GMMFitResult(gmm=gmm, comps=comps, reads_df=df, peak_subsets=subsets)
+
+def refine_peak_substructure_once(
+    comps,
+    reads_df,
+    peak_subsets,
+    *,
+    min_reads_for_refinement=150,
+    min_child_fraction=0.15,
+    min_subpeak_distance=3.0,
+    max_subpeak_sd=5.0,
+    min_bic_gain_for_split=10.0,
+    reg=1e-3,
+    seed=42,
+):
+    """
+    One-level local refinement:
+    for each non-WT peak, test k=1 vs k=2 on that peak's reads and split once
+    if evidence supports two close but distinct subpeaks.
+
+    Returns
+    -------
+    comps_refined : pd.DataFrame
+        Updated components table (WT + unsplit peaks + split child peaks).
+    reads_df_refined : pd.DataFrame
+        reads_df with updated gmm_peak_alias for split peaks.
+    peak_subsets_refined : dict
+        Updated mapping {peak_alias: [read_ids]}.
+    """
+    if comps.empty or reads_df.empty:
+        return PeakRefineResult(comps=comps, reads_df=reads_df, peak_subsets=peak_subsets)
+
+    reads_df_refined = reads_df.copy()
+    peak_subsets_refined = {k: list(v) for k, v in peak_subsets.items()}
+
+    wt_rows = comps.loc[comps["peak_alias"].str.upper() == "WT"]
+    if wt_rows.empty:
+        wt_mean = float(comps.loc[(comps["mean_bp"] - 336).abs().idxmin(), "mean_bp"])
+    else:
+        wt_mean = float(wt_rows.iloc[0]["mean_bp"])
+
+    split_models = {}
+    split_alias_map = {}
+
+    for _, row in comps.iterrows():
+        parent_alias = str(row["peak_alias"])
+        if parent_alias.upper() == "WT":
+            continue
+
+        read_ids = peak_subsets_refined.get(parent_alias, [])
+        n_parent = len(read_ids)
+        if n_parent < min_reads_for_refinement:
+            logger.debug(
+                f"[refine_peak_substructure_once] Skip {parent_alias}: n={n_parent} < min_reads_for_refinement={min_reads_for_refinement}"
+            )
+            continue
+
+        X = reads_df_refined.loc[
+            reads_df_refined["read_id"].isin(read_ids), "read_len"
+        ].to_numpy(dtype=float).reshape(-1, 1)
+        if X.shape[0] < min_reads_for_refinement:
+            continue
+
+        g1 = GaussianMixture(
+            n_components=1,
+            covariance_type="full",
+            reg_covar=reg,
+            n_init=5,
+            random_state=seed,
+        ).fit(X)
+        g2 = GaussianMixture(
+            n_components=2,
+            covariance_type="full",
+            reg_covar=reg,
+            n_init=5,
+            random_state=seed,
+        ).fit(X)
+
+        bic_gain = g1.bic(X) - g2.bic(X)
+        means = g2.means_.ravel()
+        covs = g2.covariances_
+        sds = np.sqrt(covs.reshape(-1)) if covs.ndim == 3 else np.sqrt(covs.ravel())
+        weights = g2.weights_.ravel()
+
+        order = np.argsort(means)
+        means = means[order]
+        sds = sds[order]
+        weights = weights[order]
+        mean_delta = abs(means[1] - means[0])
+
+        labels_raw = g2.predict(X)
+        labels = np.array([0 if x == order[0] else 1 for x in labels_raw], dtype=int)
+        child_counts = np.array([(labels == i).sum() for i in [0, 1]], dtype=int)
+        child_fracs = child_counts / max(int(X.shape[0]), 1)
+
+        child1_ok = child_fracs[0] >= min_child_fraction
+        child2_ok = child_fracs[1] >= min_child_fraction
+        sd_ok = bool(np.all(sds <= max_subpeak_sd))
+        dist_ok = mean_delta >= min_subpeak_distance
+        bic_ok = bic_gain >= min_bic_gain_for_split
+
+        if not (bic_ok and dist_ok and sd_ok and child1_ok and child2_ok):
+            logger.debug(
+                f"[refine_peak_substructure_once] No split for {parent_alias}: "
+                f"bic_gain={bic_gain:.2f} (>= {min_bic_gain_for_split}), "
+                f"delta={mean_delta:.2f} (>= {min_subpeak_distance}), "
+                f"sds=({sds[0]:.2f},{sds[1]:.2f}) (<= {max_subpeak_sd}), "
+                f"child_fracs=({child_fracs[0]:.3f},{child_fracs[1]:.3f}) (>= {min_child_fraction})"
+            )
+            continue
+
+        child_aliases = [f"{parent_alias}_S1", f"{parent_alias}_S2"]
+        split_alias_map[parent_alias] = child_aliases
+        split_models[parent_alias] = {
+            "means": means,
+            "sds": sds,
+            "labels": labels,
+            "child_counts": child_counts,
+        }
+
+        local_ids = reads_df_refined.loc[
+            reads_df_refined["read_id"].isin(read_ids), "read_id"
+        ].to_numpy()
+        child_ids_0 = local_ids[labels == 0].tolist()
+        child_ids_1 = local_ids[labels == 1].tolist()
+
+        peak_subsets_refined.pop(parent_alias, None)
+        peak_subsets_refined[child_aliases[0]] = child_ids_0
+        peak_subsets_refined[child_aliases[1]] = child_ids_1
+
+        reads_df_refined.loc[
+            reads_df_refined["read_id"].isin(child_ids_0), "gmm_peak_alias"
+        ] = child_aliases[0]
+        reads_df_refined.loc[
+            reads_df_refined["read_id"].isin(child_ids_1), "gmm_peak_alias"
+        ] = child_aliases[1]
+
+        logger.info(
+            f"[refine_peak_substructure_once] Split {parent_alias} -> "
+            f"{child_aliases[0]}(n={len(child_ids_0)}, mean={means[0]:.2f}, sd={sds[0]:.2f}) and "
+            f"{child_aliases[1]}(n={len(child_ids_1)}, mean={means[1]:.2f}, sd={sds[1]:.2f}); "
+            f"bic_gain={bic_gain:.2f}, delta={mean_delta:.2f}"
+        )
+
+    if not split_models:
+        return PeakRefineResult(comps=comps, reads_df=reads_df_refined, peak_subsets=peak_subsets_refined)
+
+    eff_counts = {
+        alias: len(ids)
+        for alias, ids in peak_subsets_refined.items()
+        if alias in set(reads_df_refined["gmm_peak_alias"])
+    }
+    total_eff = sum(eff_counts.values()) or 1
+
+    refined_rows = []
+    for _, row in comps.iterrows():
+        alias = str(row["peak_alias"])
+        if alias in split_models:
+            child_aliases = split_alias_map[alias]
+            model = split_models[alias]
+            for i, child_alias in enumerate(child_aliases):
+                count = int(eff_counts.get(child_alias, 0))
+                frac = count / total_eff
+                refined_rows.append({
+                    "mean_bp": float(model["means"][i]),
+                    "sd_bp": float(model["sds"][i]),
+                    "fraction": frac,
+                    "read_count": count,
+                    "effective_read_count": count,
+                    "effective_allele_freq": frac,
+                    "putative_itd_size": float(model["means"][i] - wt_mean),
+                    "is_wt": False,
+                    "peak_alias": child_alias,
+                    "parent_peak_alias": alias,
+                    "refinement_level": 1,
+                    "is_refined_child": True,
+                })
+        else:
+            count = int(eff_counts.get(alias, 0))
+            frac = count / total_eff
+            refined_rows.append({
+                "mean_bp": float(row["mean_bp"]),
+                "sd_bp": float(row["sd_bp"]),
+                "fraction": frac,
+                "read_count": count,
+                "effective_read_count": count,
+                "effective_allele_freq": frac,
+                "putative_itd_size": float(row["mean_bp"] - wt_mean),
+                "is_wt": bool(str(alias).upper() == "WT"),
+                "peak_alias": alias,
+                "parent_peak_alias": alias,
+                "refinement_level": int(row.get("refinement_level", 0)),
+                "is_refined_child": bool(row.get("is_refined_child", False)),
+            })
+
+    comps_refined = pd.DataFrame(refined_rows).sort_values("fraction", ascending=False).reset_index(drop=True)
+    logger.info(
+        f"[refine_peak_substructure_once] Refinement complete: {len(comps)} -> {len(comps_refined)} peaks."
+    )
+    return PeakRefineResult(
+        comps=comps_refined,
+        reads_df=reads_df_refined,
+        peak_subsets=peak_subsets_refined,
+    )
 
 def plot_gmm_itds(
     reads_df,
