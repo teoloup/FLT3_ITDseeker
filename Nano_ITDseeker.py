@@ -230,6 +230,23 @@ if __name__ == "__main__":
     logger.info(f"Number of threads requested: {threads}")
     logger.debug(f"Temp directory path: {temp_dir}")
 
+    def finalize_no_itd(reason):
+        logger.warning(reason)
+        call_no_itd(
+            sample_name,
+            genome,
+            seqio_reads,
+            output_folder,
+            flt3_data_folder,
+            temp_dir,
+            html_report,
+            logger,
+            remove_intermediate_files,
+            reason=reason,
+        )
+        logger.info("Exiting program with empty outputs (no ITDs detected).")
+        raise SystemExit(0)
+
     # FLT3 reference amplicon and genomic coordinates used by the pipeline.
     DEFAULT_REF_WT = """CTGTACCTTTCAGCATTTTGACGGCAACCTGGATTGAGACTCCTGTTTTGCTAATTCCATAAGCTGTTGCGTTCATCACTTTTCCAAAAGCACCTGATCCTAGTACCTTCCCTGCAAAGACAAATGGTGAGTACGTGCATTTTAAAGATTTTCCAATGGAAAAGAAATGCTGCAGAAACATTTGGCACATTCCATTCTTACCAAACTCTAAATTTTCTCTTGGAAACTCCCATTTGAGATCATATTCATATTCTCTGAAATCAACGTAGAAGTACTCATTATCTGAGGAGCCGGTCACCTGTACCATCTGTAGCTGGCTTTCATACCTAAATTGCT"""
     ref_seq = Seq(DEFAULT_REF_WT)
@@ -281,10 +298,7 @@ if __name__ == "__main__":
         quit(1)
 
     if not seqio_reads:
-        logger.warning("No FLT3 reads available after extraction/trimming.")
-        call_no_itd(sample_name, genome, seqio_reads, output_folder, flt3_data_folder, temp_dir, html_report, logger, remove_intermediate_files)
-        logger.info("Exiting program with empty outputs (no reads available for ITD detection).")
-        quit(0)
+        finalize_no_itd("No FLT3 reads available after extraction/trimming.")
 
     try:
         gmm_fit = fit_gmm_itds(
@@ -300,10 +314,7 @@ if __name__ == "__main__":
         )
     except RuntimeError as e:
         if "No GMM components passed filtering criteria" in str(e):
-            logger.warning(str(e))
-            call_no_itd(sample_name, genome, seqio_reads, output_folder, flt3_data_folder, temp_dir, html_report, logger, remove_intermediate_files)
-            logger.info("Exiting program with empty outputs (no valid GMM components).")
-            quit(0)
+            finalize_no_itd(str(e))
         logger.error(f"GMM fitting failed: {e}")
         logger.error("Aborting without writing negative (no-ITD) outputs.")
         quit(1)
@@ -332,7 +343,13 @@ if __name__ == "__main__":
         reads_df = refine_result.reads_df
         peak_subsets = refine_result.peak_subsets
 
-       
+    if comps.empty:
+        finalize_no_itd("No GMM peaks remained after refinement.")
+
+    total_effective_reads = int(comps.get("effective_read_count", pd.Series(dtype=int)).fillna(0).sum())
+    if reads_df.empty or total_effective_reads == 0:
+        finalize_no_itd("No reads remained assigned to a valid GMM peak after filtering.")
+
     logger.debug("Fitted GMM components (filtered):")
     logger.debug(comps)
     logger.debug("Per-read assignments (first 10 reads):")
@@ -354,11 +371,12 @@ if __name__ == "__main__":
         title="FLT3-ITD Read Length Distribution",
     )
 
-    #check if only WT peak is detected if yes then print no itd found write vcf and html and exit
-    if comps.shape[0] == 1 and comps['peak_alias'].iloc[0].upper() == 'WT':
-        call_no_itd(sample_name, genome, seqio_reads, output_folder, flt3_data_folder, temp_dir, html_report, logger, remove_intermediate_files)
-        logger.info("Exiting program as no ITD peaks were detected.")
-        quit(0)
+    non_wt_comps = comps.loc[
+        comps["peak_alias"].astype(str).str.upper() != "WT"
+    ].copy()
+    non_wt_comps = non_wt_comps.loc[non_wt_comps["effective_read_count"].fillna(0) > 0]
+    if non_wt_comps.empty:
+        finalize_no_itd("No ITD peaks were detected beyond the WT peak.")
         
 
     # Process per-peak reads and collect insertion calls.
@@ -366,6 +384,9 @@ if __name__ == "__main__":
 
     for alias, read_ids in peak_subsets.items():  # list of IDs per GMM peak
         if alias.upper() == "WT":
+            continue
+        if not read_ids:
+            logger.info(f"Skipping ITD peak {alias}: no reads assigned after filtering.")
             continue
         logger.info(f"Processing ITD peak: {alias} ({len(read_ids)} reads)")
         df_itd = extract_itd_insertions_from_subset_parallel(
@@ -381,9 +402,7 @@ if __name__ == "__main__":
         all_itd_insertions.append(df_itd)
 
     if not all_itd_insertions:
-        logger.warning("No ITD insertions were detected after peak processing. Exiting.")
-        call_no_itd(sample_name, genome, seqio_reads, output_folder, flt3_data_folder, temp_dir, html_report, logger, remove_intermediate_files)
-        quit(0)
+        finalize_no_itd("No ITD insertions were detected after peak processing.")
     insertions_df = pd.concat(all_itd_insertions, ignore_index=True)
     logger.debug("Per-read insertion found (first 20 reads):")
     logger.debug(insertions_df[:20])
@@ -418,9 +437,7 @@ if __name__ == "__main__":
     logger.info("Per-peak consensus sequences:")
     logger.debug(df_cons)
     if df_cons.empty:
-        logger.warning("No ITD consensus sequences were generated. Exiting.")
-        call_no_itd(sample_name, genome, seqio_reads, output_folder, flt3_data_folder, temp_dir, html_report, logger, remove_intermediate_files)
-        quit(0)
+        finalize_no_itd("No ITD consensus sequences were generated.")
 
     # Build synthetic ITD references
     logger.info("Building ITD reference sequences and plots...")
@@ -437,6 +454,8 @@ if __name__ == "__main__":
         flank_bp=200,
     )
     logger.info("Putative ITD reference sequences saved in the output folder")
+    if not itd_refs:
+        finalize_no_itd("No ITD reference sequences were generated.")
 
     # Create multi-FASTA for competitive alignment validation
     logger.info("Creating multi-reference FASTA for validation...")
@@ -454,18 +473,13 @@ if __name__ == "__main__":
     )
 
     if val_reads.empty:
-        logger.warning("No reads available for validation alignment. Exiting.")
-        call_no_itd(sample_name, genome, seqio_reads, output_folder, flt3_data_folder, temp_dir, html_report, logger, remove_intermediate_files)
-        quit(0)
+        finalize_no_itd("No reads available for validation alignment.")
 
     # Align reads to multi-FASTA in parallel
     logger.info("Aligning reads to multi-reference FASTA in parallel...")
     validation_results = align_reads_multi_ref_parallel(val_reads, ref_dict, df_cons, logger=logger, threads=threads)
     if validation_results is None or validation_results.empty:
-        logger.warning("No validation alignments were produced.")
-        call_no_itd(sample_name, genome, seqio_reads, output_folder, flt3_data_folder, temp_dir, html_report, logger, remove_intermediate_files)
-        logger.info("Exiting program with empty outputs (no valid reads for validation).")
-        quit(0)
+        finalize_no_itd("No validation alignments were produced.")
     logger.info("Validation alignment completed.")
     logger.debug("Validation alignment results (first 20 reads):")
     logger.debug(validation_results.iloc[0:20,3:])
@@ -477,6 +491,8 @@ if __name__ == "__main__":
     # Calculate allele frequencies and strand bias
     logger.info("Calculating allele frequencies and strand bias...")
     summary_df = calculate_allele_frequencies_and_strand_bias(validation_results, min_allele_frequency=min_allele_frequency)
+    if summary_df.empty:
+        finalize_no_itd("No ITDs passed validation and allele-frequency filtering.")
 
     # Save VCF file with validated ITD calls
     logger.info("Writing validated ITD calls to VCF...")

@@ -271,96 +271,105 @@ img {{
     logger.info(f"[generate_itd_html_report] Wrote HTML report: {html_path}")
     return html_path
 
-def call_no_itd(sample_name, genome, seqio_reads, output_folder, flt3_data_folder, temp_dir, html_report, logger=None, remove_intermediate_files=False):
-        if logger is None:
-            logger = logging.getLogger(__name__)
-            # Create empty VCF
-        vcf_path = f"{sample_name}_FLT3_ITD_calls.vcf"
-        output_path = os.path.join(output_folder, vcf_path)
-        seqio_reads = len(seqio_reads)
+def call_no_itd(
+    sample_name,
+    genome,
+    seqio_reads,
+    output_folder,
+    flt3_data_folder,
+    temp_dir,
+    html_report,
+    logger=None,
+    remove_intermediate_files=False,
+    reason="No ITDs detected.",
+):
+    if logger is None:
+        logger = logging.getLogger(__name__)
 
-        with open(output_path, "w") as vcf:
-            vcf.write("""##fileformat=VCFv4.23
-                        ##source=ITDValidator
-                        ##INFO=<ID=TYPE,Number=1,Type=String,Description="Variant type (ITD)">
-                        ##INFO=<ID=AF,Number=1,Type=Float,Description="Allele frequency (validated)">
-                        ##INFO=<ID=DP,Number=1,Type=Integer,Description="Total read depth">
-                        ##INFO=<ID=AF_GMM,Number=1,Type=Float,Description="Allele frequency from GMM clustering">
-                        ##INFO=<ID=AF_FITTED,Number=1,Type=Float,Description="Allele frequency from fitted model">
-                        ##INFO=<ID=FISHER_P,Number=1,Type=Float,Description="Fisher exact test p-value for strand bias">
-                        ##INFO=<ID=ITD_LEN,Number=1,Type=Integer,Description="Length of ITD insertion">
-                        ##INFO=<ID=INS_POS,Number=1,Type=Integer,Description="Insertion position on reference genome">
-                        ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
-                        ##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Total depth">
-                        ##FORMAT=<ID=AF,Number=1,Type=Float,Description="Allele frequency (validated)">
-                        ##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths for the ref and alt alleles">
-                        ##FORMAT=<ID=SB,Number=1,Type=String,Description="ITD-supporting strand counts as plus,minus">
-                        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE""")
-            # no variants added
-        logger.info(f"Empty VCF written: {output_path}")
-        if html_report:
-            html_name = f"{sample_name}_itd_report.html"
-            output_path = os.path.join(output_folder, html_name)
+    vcf_path = f"{sample_name}_FLT3_ITD_calls.vcf"
+    output_path = os.path.join(output_folder, vcf_path)
+    total_reads = seqio_reads if isinstance(seqio_reads, int) else len(seqio_reads)
 
-            gmm_plot = img_to_base64(os.path.join(flt3_data_folder, f"{sample_name}_itd_gmm_fit_plot.png"))
-            gmm_plot_block = (
-                f'<img src="{gmm_plot}" alt="GMM fit plot">'
-                if gmm_plot
-                else "<p><i>WT peak plot not available (pipeline ended before GMM plotting).</i></p>"
-            )
-            html = f"""
-                        <!DOCTYPE html>
-                        <html lang="en">
-                        <head>
-                        <meta charset="UTF-8">
-                        <title>ITD Validation Report - {sample_name}</title>
-                        <style>
-                            body {{ font-family: Arial, sans-serif; margin: 40px; }}
-                            .header {{ font-size: 24px; font-weight: bold; margin-bottom: 10px; }}
-                            .subheader {{ font-size: 18px; margin-top: 20px; }}
-                            .stats {{ font-family: monospace; margin-top: 10px; }}
-                        </style>
-                    </head>
-                    <body>
-                    <h1>ITD Validation Report</h1>
-                    <div class="section">
-                    <h2>Sample Information</h2>
-                    <p><b>Sample name:</b> {sample_name}</p>
-                    <p><b>Reference genome:</b> {genome}</p>
-                    <p><b>Total reads:</b> {seqio_reads:,}</p>
-                    <p><b>ITDs detected:</b> None </p>
-                    </div>
+    with open(output_path, "w") as vcf:
+        vcf.write(
+            """##fileformat=VCFv4.2
+##source=ITDValidator
+##INFO=<ID=TYPE,Number=1,Type=String,Description="Variant type (ITD)">
+##INFO=<ID=AF,Number=1,Type=Float,Description="Allele frequency (validated)">
+##INFO=<ID=DP,Number=1,Type=Integer,Description="Total read depth">
+##INFO=<ID=AF_GMM,Number=1,Type=Float,Description="Allele frequency from GMM clustering">
+##INFO=<ID=AF_FITTED,Number=1,Type=Float,Description="Allele frequency from fitted model">
+##INFO=<ID=FISHER_P,Number=1,Type=Float,Description="Fisher exact test p-value for strand bias">
+##INFO=<ID=ITD_LEN,Number=1,Type=Integer,Description="Length of ITD insertion">
+##INFO=<ID=INS_POS,Number=1,Type=Integer,Description="Insertion position on reference genome">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Total depth">
+##FORMAT=<ID=AF,Number=1,Type=Float,Description="Allele frequency (validated)">
+##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths for the ref and alt alleles">
+##FORMAT=<ID=SB,Number=1,Type=String,Description="ITD-supporting strand counts as plus,minus">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE"""
+        )
+    logger.info(f"Empty VCF written: {output_path}")
 
-                    <div class="section">
-                    <h2>General Overview</h2>
-                    <div class="flex-row">
-                        <div class="plot-box">
-                        <h3>Read Distribution and GMM Fit</h3>
-                        {gmm_plot_block}
-                        </div>
-                    </div>
-                    </div>
-                """
-            with open(output_path, "w") as f:
-                f.write(html)
-            logger.info(f"Empty HTML report generated: {output_path}")
+    if html_report:
+        html_name = f"{sample_name}_itd_report.html"
+        output_path = os.path.join(output_folder, html_name)
 
-        # Cleanup temp directory and intermediate files, if log is debug, keep all files
-        if os.path.exists(temp_dir):
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Temp directory and FLT3 data folder retained for debugging: {temp_dir}")
-            else:
-                try:
-                    shutil.rmtree(temp_dir)
-                    logger.info(f"Cleaned up temp directory: {temp_dir}")
-                except Exception as e:
-                    logger.error(f"Error cleaning up temp directory: {e}")
+        gmm_plot = img_to_base64(os.path.join(flt3_data_folder, f"{sample_name}_itd_gmm_fit_plot.png"))
+        gmm_plot_block = (
+            f'<img src="{gmm_plot}" alt="GMM fit plot">'
+            if gmm_plot
+            else "<p><i>Read-length / GMM plot not available for this negative run.</i></p>"
+        )
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ITD Validation Report - {sample_name}</title>
+<style>
+body {{ font-family: Arial, sans-serif; margin: 40px; background: #fafafa; }}
+.section {{ background: #ffffff; padding: 15px 20px; margin-bottom: 25px; border-radius: 10px; box-shadow: 0px 2px 4px rgba(0,0,0,0.1); }}
+img {{ max-width: 100%; border-radius: 6px; box-shadow: 0px 1px 3px rgba(0,0,0,0.2); }}
+</style>
+</head>
+<body>
+<h1>ITD Validation Report</h1>
+<div class="section">
+  <h2>Sample Information</h2>
+  <p><b>Sample name:</b> {sample_name}</p>
+  <p><b>Reference genome:</b> {genome}</p>
+  <p><b>Total reads:</b> {total_reads:,}</p>
+  <p><b>ITDs detected:</b> 0</p>
+  <p><b>Result:</b> No ITDs detected.</p>
+  <p><b>Reason:</b> {reason}</p>
+</div>
+<div class="section">
+  <h2>General Overview</h2>
+  <h3>Read Distribution and GMM Fit</h3>
+  {gmm_plot_block}
+</div>
+</body>
+</html>
+"""
+        with open(output_path, "w") as f:
+            f.write(html)
+        logger.info(f"Empty HTML report generated: {output_path}")
+
+    if os.path.exists(temp_dir):
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Temp directory and FLT3 data folder retained for debugging: {temp_dir}")
         else:
-            logger.warning(f"Temp directory does not exist, skipping cleanup: {temp_dir}")  
-        
-        if remove_intermediate_files:
             try:
-                shutil.rmtree(flt3_data_folder)
-                logger.info(f"Removed intermediate FLT3 data folder: {flt3_data_folder}")
+                shutil.rmtree(temp_dir)
+                logger.info(f"Cleaned up temp directory: {temp_dir}")
             except Exception as e:
-                logger.error(f"Error removing FLT3 data folder: {e}")
+                logger.error(f"Error cleaning up temp directory: {e}")
+    else:
+        logger.warning(f"Temp directory does not exist, skipping cleanup: {temp_dir}")
+
+    if remove_intermediate_files:
+        try:
+            shutil.rmtree(flt3_data_folder)
+            logger.info(f"Removed intermediate FLT3 data folder: {flt3_data_folder}")
+        except Exception as e:
+            logger.error(f"Error removing FLT3 data folder: {e}")

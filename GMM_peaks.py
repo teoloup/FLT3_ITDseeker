@@ -490,12 +490,26 @@ def plot_gmm_itds(
 
 
     # --- Prepare data ---
+    if reads_df.empty or "read_len" not in reads_df.columns:
+        logger.warning("[plot_gmm_itds] No assigned reads available for plotting. Skipping GMM plot.")
+        mpl_logger.setLevel(prev_level)
+        return
+
     x = reads_df["read_len"].to_numpy(dtype=float)
+    if x.size == 0:
+        logger.warning("[plot_gmm_itds] Read-length array is empty. Skipping GMM plot.")
+        mpl_logger.setLevel(prev_level)
+        return
+
     n = len(x)
-    bin_width = (x.max() - x.min()) / bins
-    xs = np.linspace(x.min(), x.max(), 2000)
+    x_min = float(x.min())
+    x_max = float(x.max())
+    span = x_max - x_min
+    bin_width = span / bins if span > 0 else 1.0
+    xs = np.linspace(x_min, x_max if span > 0 else x_min + 1.0, 2000)
 
     fig, ax = plt.subplots(figsize=(9, 5), dpi=dpi)
+    assign_mode_title = None
 
     if assign_mode == "manual":
         assign_mode_title = "Manual assignment"
@@ -529,6 +543,7 @@ def plot_gmm_itds(
         is_wt = row.get("is_wt", False)
 
         # Gaussian PDF scaled to read counts
+        sd = max(float(sd), 1e-6)
         pdf = (1/(sd*np.sqrt(2*np.pi))) * np.exp(-0.5 * ((xs - mu)/sd)**2)
         y = pdf * (n * bin_width) * frac
         mix_curve += y
