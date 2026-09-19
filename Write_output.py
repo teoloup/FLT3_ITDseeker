@@ -285,6 +285,24 @@ def generate_itd_html_report(
                 f'the same length is present and has not been separated.</div>'
             )
 
+        flags = []
+        if n_count:
+            flags.append(('warn', f'{n_count} ambiguous base' + ('' if n_count == 1 else 's')))
+        if dp and alt_n < 50:
+            flags.append(('warn', f'only {alt_n} supporting reads'))
+        try:
+            if pval is not None and float(pval) < 0.05:
+                flags.append(('warn', 'strand bias'))
+        except (TypeError, ValueError):
+            pass
+        if af < 0.02:
+            flags.append(('info', 'low allele frequency'))
+        if itd_len % 3:
+            flags.append(('info', 'frameshift'))
+        flag_html = "".join(
+            f'<span class="flag {k}">{t}</span>' for k, t in flags
+        ) or '<span class="flag ok">no flags</span>'
+
         in_frame = (itd_len % 3 == 0)
         frame_txt = ("in frame" if in_frame else
                      f'<span class="warn">out of frame ({itd_len % 3})</span>')
@@ -293,7 +311,13 @@ def generate_itd_html_report(
         ref_plot = img_to_base64(
             os.path.join(plots_dir, f"{sample_name}_{alias}_itd_ref_{reference_genome}.png")
         )
+        pileup = img_to_base64(os.path.join(plots_dir, f"{sample_name}_{alias}_pileup.png"))
         plots = ""
+        if pileup:
+            plots += (f'<figure><figcaption>Supporting reads, one row each, with the '
+                      f'inserted bases marked and coloured by strand. A clean vertical '
+                      f'edge means every read placed the insertion at the same position.'
+                      f'</figcaption><img src="{pileup}" alt="{alias} read pileup"></figure>')
         if ref_plot:
             plots += (f'<figure><figcaption>Position within FLT3</figcaption>'
                       f'<img src="{ref_plot}" alt="{alias} genomic context"></figure>')
@@ -311,6 +335,7 @@ def generate_itd_html_report(
       <span class="chip mono">{chrom}:{_fmt_int(gpos)}</span>
     </div>
   </header>
+  <div class="flags">{flag_html}</div>
 
   <div class="grid">
     <div class="metric">
@@ -377,6 +402,34 @@ def generate_itd_html_report(
                      f'<img src="{size_plot}" alt="ITD size distribution"></figure>')
 
     used_pct = (100.0 * val_reads / seqio_reads) if seqio_reads else 0.0
+
+    # One row per ITD, so a reader can take in the whole sample before reading
+    # any individual card.
+    summary_table = ""
+    if n_itds:
+        trs = []
+        for _, row in summary_df.iterrows():
+            a = str(row["ref_alias"])
+            inf = itd_refs.get(a, {})
+            ln = inf.get("itd_length", 0)
+            trs.append(
+                f'<tr><td class="mono">{a}</td>'
+                f'<td>{ln} bp</td>'
+                f'<td>{"in frame" if ln % 3 == 0 else "frameshift"}</td>'
+                f'<td class="mono">{inf.get("chr","chr13")}:{_fmt_int(inf.get("genomic_insertion_pos","n/a"))}</td>'
+                f'<td class="num"><b>{float(row.get("allele_frequency",0))*100:.2f}%</b></td>'
+                f'<td class="num">{_fmt_int(row.get("n_itd_reads",0))}</td>'
+                f'<td class="num">{_fmt_int(row.get("n_total_reads",0))}</td></tr>'
+            )
+        summary_table = f"""
+  <h2>Summary</h2>
+  <section class="card">
+    <table class="summary">
+      <thead><tr><th>ITD</th><th>Size</th><th>Frame</th><th>Position</th>
+        <th class="num">AF</th><th class="num">Reads</th><th class="num">Depth</th></tr></thead>
+      <tbody>{''.join(trs)}</tbody>
+    </table>
+  </section>"""
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -454,6 +507,20 @@ def generate_itd_html_report(
   .seqbases {{ word-break:break-all; }}
   .amb {{ background:var(--warn-soft); color:var(--warn); font-weight:700; }}
 
+  .flags {{ display:flex; gap:6px; flex-wrap:wrap; margin:-6px 0 14px; }}
+  .flag {{ font-size:11px; padding:2px 8px; border-radius:999px; font-weight:600; }}
+  .flag.warn {{ background:var(--warn-soft); color:var(--warn); }}
+  .flag.info {{ background:#eef1f4; color:var(--muted); }}
+  .flag.ok {{ background:var(--accent-soft); color:var(--accent); }}
+
+  table.summary {{ width:100%; border-collapse:collapse; font-size:14px; }}
+  table.summary th {{ text-align:left; font-size:11px; text-transform:uppercase;
+    letter-spacing:.05em; color:var(--muted); border-bottom:1px solid var(--line);
+    padding:0 10px 7px 0; font-weight:600; }}
+  table.summary td {{ padding:9px 10px 9px 0; border-bottom:1px solid var(--line); }}
+  table.summary tr:last-child td {{ border-bottom:none; }}
+  .num {{ text-align:right; }}
+
   .figures {{ display:grid; grid-template-columns:1fr; gap:18px; margin-top:18px; }}
   figure {{ margin:0; }}
   figcaption {{ font-size:12px; color:var(--muted); margin-bottom:6px; }}
@@ -487,6 +554,8 @@ def generate_itd_html_report(
   </dl>
 
   {rescue_line}
+
+  {summary_table}
 
   <h2>Detected ITDs</h2>
   {''.join(cards)}

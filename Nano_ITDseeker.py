@@ -16,7 +16,7 @@ from GMM_peaks import fit_gmm_itds, plot_gmm_itds, refine_peak_substructure_once
 from haplotype_split import BACKENDS, split_peaks
 from Pairwise_aligment_toolkit import align_reads_multi_ref_parallel
 from Write_output import export_itd_vcf, generate_itd_html_report, call_no_itd
-from Helper_functions import extract_itd_insertions_from_subset_parallel, plot_itd_size_distribution, build_itd_reference_per_peak, make_validation_refs, prepare_validation_reads, calculate_allele_frequencies_and_strand_bias
+from Helper_functions import extract_itd_insertions_from_subset_parallel, plot_itd_size_distribution, plot_itd_read_pileup, build_itd_reference_per_peak, make_validation_refs, prepare_validation_reads, calculate_allele_frequencies_and_strand_bias
 from Multiple_seq_aligment_toolkit import build_itd_consensus_sequences
 
 def install_unhandled_exception_logger():
@@ -698,6 +698,24 @@ if __name__ == "__main__":
         out_dir=flt3_data_folder,
         sample_name=sample_name
     )
+
+    # Per-ITD read pileup: shows where each supporting read placed the insertion,
+    # which is how a reader tells a clean ITD from a peak holding two of them.
+    logger.info("Creating per-ITD read pileups...")
+    for alias in insertions_df["peak_alias"].dropna().unique():
+        try:
+            plot_itd_read_pileup(
+                insertions_df=insertions_df,
+                peak_alias=str(alias),
+                ref_len=len(ref_seq),
+                out_dir=flt3_data_folder,
+                sample_name=sample_name,
+                amplicon_start=amplicon_coords[genome]["start"],
+                chrom=amplicon_coords[genome]["chr"],
+                exon_boundaries=exon_boundaries,
+            )
+        except Exception as e:
+            logger.warning(f"Could not draw read pileup for {alias}: {e}")
 
     logger.info("Per-peak consensus sequences:")
     logger.debug(df_cons)

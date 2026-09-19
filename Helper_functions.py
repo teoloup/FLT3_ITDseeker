@@ -1022,3 +1022,107 @@ def calculate_allele_frequencies_and_strand_bias(validation_results_df, min_alle
 
     return summary_df
 
+
+def plot_itd_read_pileup(
+    insertions_df,
+    peak_alias,
+    ref_len,
+    out_dir,
+    sample_name,
+    amplicon_start=None,
+    chrom="chr13",
+    exon_boundaries=None,
+    max_reads=80,
+    dpi=150,
+):
+    """Draw an IGV-style pileup of the reads supporting one ITD.
+
+    One row per read, spanning the amplicon, with the inserted bases drawn as a
+    block at the position the aligner placed them and coloured by the strand the
+    read was sequenced on. This is built from the per-read insertion evidence in
+    `insertions_df`, not from a re-alignment, so what it shows is exactly what
+    the call was made from.
+
+    What to look for:
+      * a clean vertical edge means every read puts the insertion in the same
+        place, which is what a real ITD looks like
+      * blocks of two different widths stacked together mean two ITDs of
+        different size share this peak
+      * all one colour means the ITD was seen on a single strand, which the
+        Fisher test in the report quantifies
+    """
+    subset = insertions_df.loc[insertions_df["peak_alias"] == peak_alias]
+    if subset.empty:
+        return None
+
+    n_total = len(subset)
+    # Sort by insertion position then length so disagreement shows as a ragged
+    # edge rather than being scattered through the stack.
+    subset = subset.sort_values(["ins_pos_ref", "ins_len", "read_id"])
+    if n_total > max_reads:
+        step = n_total / max_reads
+        keep = [int(i * step) for i in range(max_reads)]
+        subset = subset.iloc[keep]
+
+    n_shown = len(subset)
+    fig_h = max(2.6, min(9.0, 0.11 * n_shown + 1.5))
+    fig, ax = plt.subplots(figsize=(11, fig_h), dpi=dpi)
+
+    colour = {"+": "#4a7fb5", "-": "#d8626f"}
+    for row_i, (_, r) in enumerate(subset.iterrows()):
+        # the read body, as aligned to the wild-type reference
+        ax.add_patch(mpatches.Rectangle(
+            (0, row_i + 0.12), ref_len, 0.76,
+            facecolor="#e9edf1", edgecolor="none",
+        ))
+        pos = float(r["ins_pos_ref"])
+        length = float(r["ins_len"])
+        ax.add_patch(mpatches.Rectangle(
+            (pos, row_i + 0.05), length, 0.90,
+            facecolor=colour.get(str(r["strand"]), "#888"), edgecolor="none",
+        ))
+
+    med_pos = float(subset["ins_pos_ref"].median())
+    ax.axvline(med_pos, color="#1c2430", lw=1.1, ls="--", alpha=0.8, zorder=5)
+
+    if exon_boundaries and amplicon_start is not None:
+        for start, end in exon_boundaries:
+            lo = start - amplicon_start
+            hi = end - amplicon_start
+            if hi < 0 or lo > ref_len:
+                continue
+            ax.add_patch(mpatches.Rectangle(
+                (max(lo, 0), -0.9), min(hi, ref_len) - max(lo, 0), 0.55,
+                facecolor="#2f6f4f", alpha=0.35, edgecolor="none",
+            ))
+
+    ax.set_xlim(0, ref_len)
+    ax.set_ylim(-1.1, n_shown + 0.3)
+    ax.set_yticks([])
+    ax.set_xlabel(
+        f"Position in the {ref_len} bp amplicon"
+        + (f"   ({chrom}:{amplicon_start:,}-{amplicon_start + ref_len:,})"
+           if amplicon_start else "")
+    )
+    shown_note = "" if n_shown == n_total else f", {n_shown} shown"
+    med_len = float(subset["ins_len"].median())
+    ax.set_title(
+        f"{sample_name} — {peak_alias}: {n_total} supporting reads{shown_note}\n"
+        f"insertion {med_len:.0f} bp at amplicon position {med_pos:.0f}",
+        fontsize=10,
+    )
+    ax.legend(handles=[
+        mpatches.Patch(color=colour["+"], label="inserted bases, + strand read"),
+        mpatches.Patch(color=colour["-"], label="inserted bases, - strand read"),
+        mpatches.Patch(color="#e9edf1", label="read aligned to wild-type"),
+    ], loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=3, fontsize=8,
+        frameon=False)
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, f"{sample_name}_{peak_alias}_pileup.png")
+    fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    logger.info("[plot_itd_read_pileup] Saved: %s", out_path)
+    return out_path

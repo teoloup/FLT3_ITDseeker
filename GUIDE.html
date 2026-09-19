@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nano_ITDseeker — user guide</title>
+<style>
+:root { --bg:#f6f7f9; --panel:#fff; --ink:#1c2430; --muted:#6b7684;
+  --line:#e3e7ec; --accent:#2f6f4f; --accent-soft:#e7f2ec; --code:#f4f6f8; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--ink);
+  font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+.layout { display:grid; grid-template-columns:250px minmax(0,1fr); gap:40px;
+  max-width:1160px; margin:0 auto; padding:32px 20px 80px; }
+nav { position:sticky; top:32px; align-self:start; font-size:14px; }
+nav h2 { font-size:11px; text-transform:uppercase; letter-spacing:.09em;
+  color:var(--muted); margin:0 0 10px; }
+nav a { display:block; padding:5px 0; color:var(--ink); text-decoration:none;
+  border-left:2px solid var(--line); padding-left:12px; }
+nav a:hover { border-left-color:var(--accent); color:var(--accent); }
+main { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+  padding:34px 42px 48px; min-width:0; }
+h1 { font-size:30px; margin:0 0 6px; letter-spacing:-.01em; }
+h2 { font-size:22px; margin:44px 0 14px; padding-top:18px;
+  border-top:1px solid var(--line); }
+h3 { font-size:17px; margin:28px 0 10px; }
+h4 { font-size:15px; margin:22px 0 8px; color:var(--muted); }
+p { margin:12px 0; }
+a { color:var(--accent); }
+code { background:var(--code); border:1px solid var(--line); border-radius:4px;
+  padding:1px 5px; font-size:.88em;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+pre { background:var(--code); border:1px solid var(--line); border-radius:8px;
+  padding:14px 16px; overflow-x:auto; line-height:1.5; }
+pre code { background:none; border:none; padding:0; font-size:13px; }
+table { border-collapse:collapse; width:100%; margin:18px 0; font-size:14.5px;
+  display:block; overflow-x:auto; }
+th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.05em;
+  color:var(--muted); border-bottom:2px solid var(--line); padding:0 12px 8px 0; }
+td { padding:9px 12px 9px 0; border-bottom:1px solid var(--line);
+  vertical-align:top; }
+tr:last-child td { border-bottom:none; }
+ul,ol { padding-left:22px; margin:12px 0; }
+li { margin:5px 0; }
+hr { border:none; border-top:1px solid var(--line); margin:34px 0; }
+strong { font-weight:650; }
+@media (max-width:900px) {
+  .layout { grid-template-columns:1fr; gap:20px; }
+  nav { position:static; }
+  main { padding:24px 20px 32px; }
+}
+@media print {
+  body { background:#fff; } nav { display:none; }
+  .layout { display:block; max-width:none; padding:0; }
+  main { border:none; padding:0; } h2 { break-after:avoid; }
+  pre,table { break-inside:avoid; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav><h2>Contents</h2><a href="#1-what-an-flt3-itd-is-and-why-length-is-the-starting-point">1. What an FLT3-ITD is, and why length is the starting point</a><a href="#quick-start">Quick start</a><a href="#3-how-a-sample-flows-through-the-pipeline">3. How a sample flows through the pipeline</a><a href="#4-worked-example-a-sample-with-three-itds">4. Worked example: a sample with three ITDs</a><a href="#5-the-same-length-problem-and-the-rescue">5. The same-length problem, and the rescue</a><a href="#reading-the-output">Reading the output</a><a href="#7-parameters-that-actually-matter">7. Parameters that actually matter</a><a href="#8-known-limits">8. Known limits</a><a href="#9-validation">9. Validation</a></nav>
+  <main><h1 id="nano-itdseeker-user-guide">Nano_ITDseeker — user guide</h1>
+<p>Detecting FLT3 internal tandem duplications in Nanopore amplicon data: what the tool does, how to run it, how to read what comes out, and where it can be wrong.</p>
+<p>If you only want to run it, read <a href="#quick-start">Quick start</a> and <a href="#reading-the-output">Reading the output</a>. The rest explains the reasoning, with worked examples from the validation set.</p>
+<hr>
+<hr>
+<h2 id="1-what-an-flt3-itd-is-and-why-length-is-the-starting-point">1. What an FLT3-ITD is, and why length is the starting point</h2>
+<p>An FLT3-ITD duplicates a stretch of the juxtamembrane domain in tandem, so the allele carries the duplicated bases inserted directly after the original copy. Duplications in this cohort run from ~24 bp to ~190 bp.</p>
+<p>The consequence the pipeline exploits: <strong>an ITD read is longer than a wild-type read by exactly the size of the duplication.</strong> Amplify a fixed region, trim the primers, and the read lengths fall into discrete peaks — one at the wild-type amplicon length (336 bp by default), one per ITD, each offset by its size.</p>
+<pre class="lang-text"><code>
+           WT (336bp)
+              |
+   reads      |            ITD +45bp            ITD +81bp
+   per        ▇            (381bp)              (417bp)
+   length    ▇▇▇              ▇                    ▇
+            ▇▇▇▇▇            ▇▇▇                  ▇▇▇
+   ─────────────────────────────────────────────────────── read length
+</code></pre>
+<p>Fitting a mixture model to those lengths gives you candidate ITDs, their sizes, and a first estimate of how common each one is. That is the core of the method, and for most samples it is sufficient.</p>
+<p>Where it stops working is <a href="#5-the-same-length-problem-and-the-rescue">section 5</a>.</p>
+<hr>
+<h2 id="quick-start">Quick start</h2>
+<h3 id="requirements">Requirements</h3>
+<ul>
+<li>Linux (or WSL). <code>samtools</code> and <code>cutadapt</code> must both resolve on <code>PATH</code> —</li>
+</ul>
+<p>  installing cutadapt inside a virtualenv that is not on <code>PATH</code> is <strong>not</strong>   enough, because the pipeline invokes it as a subprocess by name.</p>
+<ul>
+<li>Python 3.9+ and the packages in <code>requirements.txt</code>.</li>
+<li><code>pymuscle5</code> has no PyPI release; install it from source:</li>
+</ul>
+<p>  <code>pip install git+https://github.com/althonos/pymuscle5</code> (needs Cython and a C   toolchain).</p>
+<p>The <code>Dockerfile</code> does all of this, including the optional haplotype backends, and fails the build if any of them is missing:</p>
+<pre class="lang-bash"><code>
+docker build -t nano-itdseeker .
+docker run --rm -v &quot;$PWD&quot;:/data nano-itdseeker \
+    -b /data/sample.bam -o /data/out -s SAMPLE -g hg38 -t 8 --html-report
+</code></pre>
+<h3 id="input">Input</h3>
+<p>A coordinate-sorted, indexed BAM aligned to hg38 or hg19, containing the FLT3 amplicon. Reads may be in either orientation; the pipeline normalises them.</p>
+<h3 id="a-typical-run">A typical run</h3>
+<pre class="lang-bash"><code>
+python Nano_ITDseeker.py \
+    -b sample.bam \
+    -o results/ \
+    -s SAMPLE_01 \
+    -g hg38 \
+    -t 8 \
+    --html-report
+</code></pre>
+<p><code>-t 8</code> is deliberate — see <a href="#7-parameters-that-actually-matter">section 7</a>.</p>
+<p>To report low-frequency ITDs, lower the reporting floor:</p>
+<pre class="lang-bash"><code>
+    --min-allele-frequency 0.01
+</code></pre>
+<p>The default of 0.05 will suppress real ITDs. In the validation set, two fragment-analysis-confirmed ITDs sit at AF 0.040 and 0.017 — both are detected and correctly quantified at the default, then filtered out before reporting.</p>
+<hr>
+<h2 id="3-how-a-sample-flows-through-the-pipeline">3. How a sample flows through the pipeline</h2>
+<pre class="lang-text"><code>
+BAM
+ │
+ ├─ 1. extract region reads           samtools view + samtools fastq
+ ├─ 2. trim primers                   cutadapt, linked adapters, --rc
+ │                                    → reads normalised to one orientation,
+ │                                      strand recorded per read
+ ├─ 3. fit read lengths               Gaussian mixture; peaks = WT + candidates
+ ├─ 4. split peaks into haplotypes    length-based by default; sequence
+ │                                      clustering on demand (section 5)
+ ├─ 5. extract insertions per peak    pairwise align each read to WT,
+ │                                      read the inserted bases out
+ ├─ 6. build a consensus per peak     weighted MSA over unique insertions
+ ├─ 7. build one reference per ITD    WT with that consensus inserted
+ ├─ 8. competitive validation         align every read against WT + all ITD
+ │                                      references; each read votes once
+ └─ 9. quantify and report            AF, strand bias, VCF, HTML
+</code></pre>
+<h3 id="why-step-8-exists">Why step 8 exists</h3>
+<p>Steps 3–7 propose ITDs. Step 8 tests them. Every read is aligned against the wild-type reference <strong>and</strong> every candidate ITD reference, and is assigned to whichever it fits best. An ITD that was an artefact of read-length noise collects no votes and disappears; a real one collects reads in proportion to its abundance, which is where the reported allele frequency comes from.</p>
+<p>This is also why AF is computed over <em>classified</em> reads rather than all reads: a read that cannot be assigned confidently is not evidence for anything.</p>
+<h3 id="strand-handling-briefly">Strand handling, briefly</h3>
+<p><code>samtools fastq</code> restores each read to its original sequencing orientation, then <code>cutadapt --rc</code> flips whichever reads need flipping and tags them. So the strand recorded per read reflects the strand that was actually sequenced, which is what makes the strand-bias test meaningful rather than circular.</p>
+<hr>
+<h2 id="4-worked-example-a-sample-with-three-itds">4. Worked example: a sample with three ITDs</h2>
+<p>Sample 13697 from the validation set. Fragment analysis confirms three ITDs of 24 bp, 72 bp and 30 bp.</p>
+<p><strong>Step 3 — read lengths.</strong> The mixture fit finds a wild-type peak at ~336 bp and two further peaks. The 24 bp and 30 bp ITDs are close enough in length that they land in a single peak.</p>
+<p><strong>Step 4 — splitting.</strong> The length-based second pass tests that peak for substructure and separates it into a 24 bp and a 30 bp component, because their lengths genuinely differ.</p>
+<p><strong>Steps 5–6 — insertions and consensus.</strong> Each peak&#x27;s reads are aligned to the wild-type reference and the inserted bases extracted. For the 24 bp peak:</p>
+<pre class="lang-text"><code>
+ITD_1_S1   len=24   n=531 reads   531 unique   0 N
+           TCATATTCTCTGAAATCAACGTAG
+</code></pre>
+<p>Zero <code>N</code> is the signal that every read behind this peak agrees. If two different ITDs had been mixed here, the disagreeing columns would come out as <code>N</code>.</p>
+<p><strong>Step 8 — validation.</strong> Four references now exist: WT, 24 bp, 72 bp, 30 bp. Every read is aligned against all four.</p>
+<p><strong>Step 9 — results.</strong></p>
+<table><thead><tr>
+<th style="text-align:left">ITD</th>
+<th style="text-align:left">size</th>
+<th style="text-align:left">position</th>
+<th style="text-align:left">AF</th>
+<th style="text-align:left">fragment analysis</th>
+</tr></thead><tbody>
+<tr>
+<td style="text-align:left">ITD_1_S1</td>
+<td style="text-align:left">24 bp</td>
+<td style="text-align:left">chr13:28034125</td>
+<td style="text-align:left">8.7%</td>
+<td style="text-align:left">24 bp, 8.5%</td>
+</tr>
+<tr>
+<td style="text-align:left">ITD_2</td>
+<td style="text-align:left">72 bp</td>
+<td style="text-align:left">chr13:28034103</td>
+<td style="text-align:left">8.0%</td>
+<td style="text-align:left">72 bp, 10.5%</td>
+</tr>
+<tr>
+<td style="text-align:left">ITD_1_S2</td>
+<td style="text-align:left">30 bp</td>
+<td style="text-align:left">chr13:28034149</td>
+<td style="text-align:left">3.9%</td>
+<td style="text-align:left">30 bp, 4.0%</td>
+</tr>
+</tbody></table>
+<p>All three sizes match exactly. Note the third sits below the default <code>--min-allele-frequency 0.05</code> and needs <code>0.01</code> to be reported.</p>
+<hr>
+<h2 id="5-the-same-length-problem-and-the-rescue">5. The same-length problem, and the rescue</h2>
+<h3 id="the-problem">The problem</h3>
+<p>Two different ITDs of the <strong>same size</strong> produce reads of the same length. They are the same point in the feature the mixture model sees, so no amount of extra length-based refinement can separate them. They end up in one peak, their reads are pooled, and the consensus is built from a mixture of two sequences.</p>
+<p>Where the two disagree, the consensus emits <code>N</code>:</p>
+<pre class="lang-text"><code>
+one peak, three 45bp ITDs pooled:
+  ANNNNTTTTCCAANNGNANNNNATNCTNCNGNAANN      ← 17 N in 36 bases
+</code></pre>
+<p>That output is useless, and worse, the reads supporting the second ITD are counted towards the first, distorting both allele frequencies.</p>
+<h3 id="the-rescue">The rescue</h3>
+<p><code>N</code> in a consensus is a <em>measurement</em> that the reads disagree. The pipeline uses it as a trigger:</p>
+<ol>
+<li>Split peaks the normal way, build the consensus.</li>
+<li>If the worst peak is more than <code>--rescue-n-fraction</code> ambiguous (default 5%),</li>
+</ol>
+<p>   re-split the sample from the original peaks using <code>--rescue-method</code> (default    <code>dada2</code>), which clusters reads by <strong>sequence</strong> rather than length.</p>
+<ol>
+<li><strong>Keep the re-split only if it reduces the ambiguity.</strong> If it does not, the</li>
+</ol>
+<p>   original result stands.</p>
+<p>Step 3 is what makes this safe: the rescue cannot make the result worse by the measure that invoked it.</p>
+<p>On simulated data with three 45 bp ITDs sharing one peak:</p>
+<pre class="lang-text"><code>
+before rescue:  1 ITD reported,  17 ambiguous bases
+after  rescue:  3 ITDs reported,  0 ambiguous bases
+</code></pre>
+<p>On all five real validation samples the trigger <strong>never fires</strong> — their ITDs differ in size, so nothing is mixed, and the output is identical with the rescue enabled or disabled.</p>
+<p>The rescue is optional. If R or dada2 is not installed, the attempt is logged by name and the primary result is kept; the run still succeeds.</p>
+<h3 id="why-dada2-and-not-the-others">Why dada2 and not the others</h3>
+<p>Three clustering backends are available. Measured against the validation set:</p>
+<table><thead><tr>
+<th style="text-align:left">method</th>
+<th style="text-align:left">11531 (1 ITD)</th>
+<th style="text-align:left">13697 (3 ITDs)</th>
+<th style="text-align:left">14219 (2 ITDs)</th>
+</tr></thead><tbody>
+<tr>
+<td style="text-align:left"><code>gmm2pass</code> (default)</td>
+<td style="text-align:left">1 ✓</td>
+<td style="text-align:left">3 ✓</td>
+<td style="text-align:left">2 ✓</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>dada2</code></td>
+<td style="text-align:left">1 ✓</td>
+<td style="text-align:left">3 ✓</td>
+<td style="text-align:left">2 ✓</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>isonclust</code></td>
+<td style="text-align:left">1 ✓</td>
+<td style="text-align:left"><strong>2</strong> ✗</td>
+<td style="text-align:left">2 ✓</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>amplici</code></td>
+<td style="text-align:left">1 ✓</td>
+<td style="text-align:left"><strong>2</strong> ✗</td>
+<td style="text-align:left"><strong>1</strong> ✗</td>
+</tr>
+</tbody></table>
+<p><code>dada2</code> is the only backend that matches the length-based baseline everywhere while still separating same-length ITDs in simulation. <code>isonclust</code> merged the 30 bp ITD into the 24 bp peak; <code>amplici</code> fragmented real ITDs, in one case splitting a 37%-AF ITD in two and then losing the call entirely. Neither is safe to invoke automatically, though both remain available via <code>--haplotype-method</code>.</p>
+<hr>
+<h2 id="reading-the-output">Reading the output</h2>
+<pre class="lang-text"><code>
+results/
+├── SAMPLE_FLT3_ITD_calls.vcf       ← the calls
+├── SAMPLE_itd_report.html          ← the readable report
+└── flt3_data/
+    ├── SAMPLE_itd_gmm_fit_plot.png         read lengths and fitted peaks
+    ├── SAMPLE_itd_size_distribution.png    insertion sizes across reads
+    ├── SAMPLE_itd_insertions.tsv           per-read insertion evidence
+    ├── SAMPLE_itd_consensus_seq.tsv        per-peak consensus (check N here)
+    ├── SAMPLE_validation_refs.fasta        the references reads were tested against
+    ├── SAMPLE_validation_read_support.tsv  per-read assignment and scores
+    └── SAMPLE_&lt;ITD&gt;_*.png                  per-ITD plots
+</code></pre>
+<h3 id="the-vcf">The VCF</h3>
+<pre class="lang-text"><code>
+chr13  28034081  ITD_1  C  CCAAACTCTAAATTTTCTCTTGGAAACTCCCATTTGAGATCATATT  .  PASS
+       TYPE=ITD;AF=0.41235;DP=13537;AF_GMM=0.40974;AF_FITTED=0.37672;
+       FISHER_P=0.000478;ITD_LEN=45;INS_POS=28034081
+       GT:DP:AF:AD:SB   0/1:13537:0.4124:7955,5582:2753,2829
+</code></pre>
+<table><thead><tr>
+<th style="text-align:left">field</th>
+<th style="text-align:left">meaning</th>
+</tr></thead><tbody>
+<tr>
+<td style="text-align:left"><code>POS</code></td>
+<td style="text-align:left">1-based plus-strand position of the base <strong>before</strong> the insertion</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>REF</code></td>
+<td style="text-align:left">that anchor base</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>ALT</code></td>
+<td style="text-align:left">the anchor base followed by the inserted sequence — standard VCF insertion form, so <code>bcftools norm</code> and VEP handle it correctly</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>AF</code></td>
+<td style="text-align:left">allele frequency from competitive validation. <strong>This is the number to use.</strong></td>
+</tr>
+<tr>
+<td style="text-align:left"><code>AF_GMM</code></td>
+<td style="text-align:left">allele frequency from read-length clustering, before validation</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>AF_FITTED</code></td>
+<td style="text-align:left">the mixture model&#x27;s own weight for that peak</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>DP</code></td>
+<td style="text-align:left">classified reads contributing to AF</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>AD</code></td>
+<td style="text-align:left">reference-supporting, ITD-supporting</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>SB</code></td>
+<td style="text-align:left">ITD-supporting reads as <code>plus,minus</code></td>
+</tr>
+<tr>
+<td style="text-align:left"><code>FISHER_P</code></td>
+<td style="text-align:left">strand bias of this ITD against the wild-type strand split</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>ITD_LEN</code></td>
+<td style="text-align:left">duplication size in bp</td>
+</tr>
+</tbody></table>
+<p><strong>Orientation.</strong> FLT3 is transcribed from the minus strand of chr13. <code>REF</code> and <code>ALT</code> are given on the <strong>plus strand</strong>, per VCF convention, so the sequence in <code>ALT</code> is the reverse complement of the coding sequence.</p>
+<p><strong>A caveat on <code>POS</code>.</strong> An ITD sits in a tandem repeat, so a duplication of length <em>L</em> inserted at position <em>P</em> is indistinguishable from the same duplication at <em>P − L</em>; the aligner picks one. If you compare positions across tools or runs, normalise first (<code>bcftools norm</code>) or compare modulo the ITD length.</p>
+<h3 id="three-numbers-worth-checking">Three numbers worth checking</h3>
+<ul>
+<li><strong><code>AF</code> against <code>AF_GMM</code>.</strong> They should be close. A large gap means competitive</li>
+</ul>
+<p>  validation reassigned many reads, which is worth understanding before trusting   the call.</p>
+<ul>
+<li><strong><code>FISHER_P</code>.</strong> Below 0.05 means this ITD&#x27;s strand split differs from the</li>
+</ul>
+<p>  wild-type split, which can indicate a trimming or read-quality artefact rather   than biology.</p>
+<ul>
+<li><strong><code>N</code> count in <code>*_itd_consensus_seq.tsv</code>.</strong> Anything above zero means the reads</li>
+</ul>
+<p>  behind that peak disagree. With the rescue enabled this is usually already   handled; if <code>N</code>s survive it, the peak may hold two ITDs the tool could not   separate, and the call should be treated as provisional.</p>
+<h3 id="the-html-report">The HTML report</h3>
+<p>One card per ITD, carrying the size, genomic position, allele frequency with its read counts, strand balance with the Fisher test, and the inserted sequence itself (ambiguous bases highlighted). Whether the frame is preserved is shown, since <code>ITD_LEN % 3 != 0</code> means a frameshift rather than an in-frame duplication. If the rescue fired, a banner says so and by how much it reduced ambiguity. Everything is inlined, so the file can be archived or emailed on its own.</p>
+<hr>
+<h2 id="7-parameters-that-actually-matter">7. Parameters that actually matter</h2>
+<p>Defaults were chosen against the validation set and the simulator; the measurements are in <a href="benchmarks/"><code>benchmarks/</code></a>.</p>
+<table><thead><tr>
+<th style="text-align:left">option</th>
+<th style="text-align:left">default</th>
+<th style="text-align:left">why</th>
+</tr></thead><tbody>
+<tr>
+<td style="text-align:left"><code>--min-allele-frequency</code></td>
+<td style="text-align:left">0.05</td>
+<td style="text-align:left"><strong>Often too high.</strong> Real fragment-analysis-confirmed ITDs in this cohort sit at 0.040 and 0.017. Use <code>0.01</code> unless you need the stricter floor.</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>-t, --threads</code></td>
+<td style="text-align:left">1</td>
+<td style="text-align:left"><strong>8 is the practical maximum.</strong> The parallel stages scale ~9×, but they are only 66–86% of runtime, so total speedup caps near 2.6–3.5×. Past 8 workers you gain ~5% for 2.5× the cores.</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>--haplotype-method</code></td>
+<td style="text-align:left"><code>gmm2pass</code></td>
+<td style="text-align:left">Length-based splitting. Correct on every real sample tested.</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>--rescue-method</code></td>
+<td style="text-align:left"><code>dada2</code></td>
+<td style="text-align:left">Used only when a consensus comes back ambiguous.</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>--rescue-n-fraction</code></td>
+<td style="text-align:left">0.05</td>
+<td style="text-align:left">Real samples produced 0% N; a simulated mixed peak produced 47%. Nothing observed in between.</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>--msa-max-unique</code></td>
+<td style="text-align:left">150</td>
+<td style="text-align:left">Largest single runtime lever — MUSCLE is superlinear in panel size. Raising to 300 roughly triples the consensus stage without changing any call.</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>--min-itd-size</code> / <code>--max-itd-size</code></td>
+<td style="text-align:left">12 / 300</td>
+<td style="text-align:left">Hard bounds on reportable duplication size.</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>--wt-amplicon-length</code></td>
+<td style="text-align:left">336</td>
+<td style="text-align:left">Must match your amplicon. It defines which peak is wild-type, and therefore every ITD size.</td>
+</tr>
+</tbody></table>
+<p>If you change the amplicon or primers, <code>--wt-amplicon-length</code> and the primer sequences in <code>bam_extractor.py</code> must both be updated, and the reference amplicon in <code>Nano_ITDseeker.py</code> with them.</p>
+<hr>
+<h2 id="8-known-limits">8. Known limits</h2>
+<ul>
+<li><strong>ITDs identical in both length and position</strong>, differing only by substituted</li>
+</ul>
+<p>  bases, are not separated by the default or the rescue. Only <code>amplici</code> resolved   this in simulation, and it is too aggressive on real data to enable by default.   This pattern is biologically uncommon — co-occurring ITDs usually differ in   size or breakpoint — but a surviving <code>N</code> in the consensus is the sign of it.</p>
+<ul>
+<li><strong>Detection depends on read-length clustering.</strong> An ITD whose reads do not form</li>
+</ul>
+<p>  a distinct length peak, or that falls below <code>--min-gmm-fraction</code> (default 1%),   will not be proposed and therefore cannot be validated. Reads assigned to the   wild-type peak are never examined for insertions.</p>
+<ul>
+<li><strong>Very small ITDs</strong> close to the wild-type length can be absorbed into the</li>
+</ul>
+<p>  wild-type peak.</p>
+<ul>
+<li><strong><code>POS</code> is not left-normalised.</strong> See the caveat above.</li>
+<li><strong>Genotype is always reported <code>0/1</code>.</strong> These are somatic calls; the field is a</li>
+</ul>
+<p>  placeholder, not a zygosity determination.</p>
+<ul>
+<li><strong>The <code>AD</code> reference count</strong> is depth minus this ITD&#x27;s reads, so in a</li>
+</ul>
+<p>  multi-ITD sample it includes reads supporting the other ITDs.</p>
+<hr>
+<h2 id="9-validation">9. Validation</h2>
+<p>Five samples, seven fragment-analysis-confirmed ITDs, one ITD-negative control.</p>
+<table><thead><tr>
+<th style="text-align:left">sample</th>
+<th style="text-align:left">ITDs</th>
+<th style="text-align:left">sizes</th>
+<th style="text-align:left">result</th>
+</tr></thead><tbody>
+<tr>
+<td style="text-align:left">10808</td>
+<td style="text-align:left">1</td>
+<td style="text-align:left">45 bp</td>
+<td style="text-align:left">✓ size and position exact</td>
+</tr>
+<tr>
+<td style="text-align:left">11531</td>
+<td style="text-align:left">1</td>
+<td style="text-align:left">189 bp</td>
+<td style="text-align:left">✓</td>
+</tr>
+<tr>
+<td style="text-align:left">13697</td>
+<td style="text-align:left">3</td>
+<td style="text-align:left">24, 72, 30 bp</td>
+<td style="text-align:left">✓ all three</td>
+</tr>
+<tr>
+<td style="text-align:left">14219</td>
+<td style="text-align:left">2</td>
+<td style="text-align:left">81, 30 bp</td>
+<td style="text-align:left">✓ both</td>
+</tr>
+<tr>
+<td style="text-align:left">14417</td>
+<td style="text-align:left">0</td>
+<td style="text-align:left">—</td>
+<td style="text-align:left">✓ no calls</td>
+</tr>
+</tbody></table>
+<p><strong>7/7 detected, 0 false positives.</strong> Every ITD length and genomic position matches the previous validated version of the tool exactly, and the inserted sequences are byte-identical. Allele frequencies agree with fragment analysis to within the difference expected between the two assays.</p>
+<p>Measured read accuracy on this cohort, from the ITD-negative control: median 99.4% identity, with indels running about 1.3× substitutions — consistent with R10.4 chemistry and a recent super-accuracy basecalling model.</p>
+<p>To regenerate or extend the evidence:</p>
+<pre class="lang-bash"><code>
+# build a synthetic sample with known haplotypes
+python simulate_itd_data.py --scenario A --reads 8000 --out-dir sim_data
+
+# run it
+python Nano_ITDseeker.py -b sim_data/sim_A.bam -o sim_out -s simA \
+    -g hg38 -t 8 --min-allele-frequency 0.01
+
+# score the calls against the truth tables
+python evaluate_haplotypes.py --run-dir sim_out --sample simA \
+    --truth-dir sim_data --scenario A --method gmm2pass
+</code></pre>
+<p><code>simulate_itd_data.py</code> models the error profile measured from the negative control, and scenario A deliberately includes ITDs that share a length, so it exercises the failure mode that motivates the rescue. <code>evaluate_haplotypes.py</code> reports recovery, over-splitting, allele-frequency error, ambiguous-base counts and read-level clustering agreement.</p></main>
+</div>
+</body>
+</html>
