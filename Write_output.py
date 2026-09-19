@@ -277,7 +277,9 @@ img {{
         itd_len = itd_refs.get(alias, {}).get("itd_length", "N/A")
         pos = itd_refs.get(alias, {}).get("genomic_insertion_pos", "N/A")
         msa_plot = img_to_base64(os.path.join(plots_dir, f"{sample_name}_{alias}_MSA_consensus.png"))
-        ref_plot = img_to_base64(os.path.join(plots_dir, f"{sample_name}_{alias}_itd_ref_hg38.png"))
+        ref_plot = img_to_base64(
+            os.path.join(plots_dir, f"{sample_name}_{alias}_itd_ref_{reference_genome}.png")
+        )
 
         html += f"""
 <div class="section">
@@ -290,7 +292,7 @@ img {{
   </table>
   <h3>Consensus Sequence Alignment</h3>
   <img src="{msa_plot}" alt="{alias} MSA plot">
-  <h3>Genomic Context (hg38)</h3>
+  <h3>Genomic Context ({reference_genome})</h3>
   <img src="{ref_plot}" alt="{alias} genomic reference">
 </div>
 """

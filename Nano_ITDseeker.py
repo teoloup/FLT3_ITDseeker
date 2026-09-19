@@ -274,7 +274,11 @@ if __name__ == "__main__":
     else:
         logger.error(f"Unsupported genome build: {genome}")
         quit(1)
-    exon_labels = [f"Ex{idx+1}" for idx in range(len(exon_boundaries))]
+    # FLT3 is transcribed from the minus strand of chr13, so exon 1 is the
+    # highest-coordinate entry: numbering runs opposite to the sorted list.
+    exon_labels = [
+        f"Ex{len(exon_boundaries) - idx}" for idx in range(len(exon_boundaries))
+    ]
 
     # Extract FLT3 reads
     try:
@@ -310,7 +314,8 @@ if __name__ == "__main__":
             max_peak_sd=max_peak_sd,
             max_itds_detected=max_itds_detected,
             min_ggmm_peak_distance=min_gmm_peak_distance,
-            force_k=force_k
+            force_k=force_k,
+            wt_amplicon_length=wt_amplicon_length,
         )
     except RuntimeError as e:
         if "No GMM components passed filtering criteria" in str(e):
@@ -338,6 +343,7 @@ if __name__ == "__main__":
             min_subpeak_distance=min_subpeak_distance,
             max_subpeak_sd=max_subpeak_sd,
             min_bic_gain_for_split=min_bic_gain_for_subpeak_split,
+            wt_amplicon_length=wt_amplicon_length,
         )
         comps = refine_result.comps
         reads_df = refine_result.reads_df
@@ -396,7 +402,9 @@ if __name__ == "__main__":
             peak_alias=alias,
             comps=comps,
             threads=threads,
-            itd_sd_factor=1.5
+            itd_sd_factor=1.5,
+            min_itd_size=min_itd_size,
+            max_itd_size=max_itd_length,
         )
         logger.debug(df_itd)
         all_itd_insertions.append(df_itd)

@@ -318,20 +318,16 @@ def validate_itd_supporting_reads(
 
     return df_best
 
-def count_gaps_near(aln, insertion_pos, window=15):
-    """Count total gap bases in the reference +/-window bp around the insertion site."""
-    ref = aln.target
-    qry = aln.query
-    total_gap_bp = 0
-    ref_pos = -1
-    for r, q in zip(ref, qry):
-        if r != "-":
-            ref_pos += 1
-        if (insertion_pos - window) <= ref_pos <= (insertion_pos + window):
-            if q == "-":
-                total_gap_bp += 1
-    return total_gap_bp
 
+INSERTION_COLUMNS = [
+    "peak_alias", "read_id", "strand", "aln_score", "pct_identity",
+    "ins_pos_ref", "ins_len", "ins_seq", "fwd_score", "rev_score",
+]
+
+
+def empty_insertions_frame() -> pd.DataFrame:
+    """An empty insertions table with the full column set."""
+    return pd.DataFrame(columns=INSERTION_COLUMNS)
 
 
 def extract_itd_insertions_from_subset_parallel(
@@ -341,7 +337,9 @@ def extract_itd_insertions_from_subset_parallel(
     peak_alias: str,
     comps: pd.DataFrame,
     threads: int = 4,
-    itd_sd_factor: float = 1.0
+    itd_sd_factor: float = 1.0,
+    min_itd_size: int = 0,
+    max_itd_size: int = None,
 ) -> pd.DataFrame:
     """
     Strand-aware alignment for ITD subset.
@@ -363,6 +361,10 @@ def extract_itd_insertions_from_subset_parallel(
         Number of threads (chunks = threads).
     itd_sd_factor : float
         Acceptable deviation from ITD size ± (factor × SD).
+    min_itd_size, max_itd_size : int
+        Hard bounds on reportable ITD length. The per-peak window derived
+        from the GMM is intersected with [min_itd_size, max_itd_size]; a peak
+        whose window falls entirely outside those bounds yields no insertions.
     """
 
     # --- Skip WT ---
@@ -377,6 +379,27 @@ def extract_itd_insertions_from_subset_parallel(
 
     itd_min = itd_mean - itd_sd * itd_sd_factor
     itd_max = itd_mean + itd_sd * itd_sd_factor
+
+    # Intersect the GMM-derived window with the configured size bounds, so
+    # --min-itd-size / --max-itd-size actually constrain what gets reported.
+    window_before = (itd_min, itd_max)
+    itd_min = max(itd_min, float(min_itd_size))
+    if max_itd_size is not None:
+        itd_max = min(itd_max, float(max_itd_size))
+    if itd_min != window_before[0] or itd_max != window_before[1]:
+        logger.info(
+            "[extract_itd_insertions_from_subset_parallel] %s: size window clamped "
+            "from %.1f-%.1f to %.1f-%.1f bp by --min-itd-size/--max-itd-size.",
+            peak_alias, window_before[0], window_before[1], itd_min, itd_max,
+        )
+    if itd_min > itd_max:
+        logger.warning(
+            "[extract_itd_insertions_from_subset_parallel] Skipping %s: expected ITD "
+            "size %.1f +/- %.1f bp lies outside the allowed range %d-%s bp.",
+            peak_alias, itd_mean, itd_sd * itd_sd_factor, min_itd_size, max_itd_size,
+        )
+        return empty_insertions_frame()
+
     logger.debug(f"Processing {peak_alias}: mean ITD size = {itd_mean:.1f} bp, SD = {itd_sd:.1f} bp. Range: {itd_min:.1f} - {itd_max:.1f} bp")
     # --- Get sequences for this subset ---
     reads_subset_df = reads_df.loc[reads_df["read_id"].isin(read_ids_subset), ["read_id", "read_seq", "strand"]]
@@ -410,10 +433,7 @@ def extract_itd_insertions_from_subset_parallel(
     )
 
     if not results:
-        return pd.DataFrame(columns=[
-            "peak_alias", "read_id", "strand", "aln_score", "pct_identity",
-            "ins_pos_ref", "ins_len", "ins_seq", "fwd_score", "rev_score"
-        ])
+        return empty_insertions_frame()
 
     df = pd.DataFrame(results)
     df.sort_values(["ins_pos_ref", "ins_len"], inplace=True, ignore_index=True)
@@ -662,9 +682,9 @@ def plot_itd_vs_ref_with_genome(
     # Determine plot range
     left = insertion_genomic_pos - (flank_bp)
     right = insertion_genomic_pos + flank_bp
-    # ----- Plot only exons 10 and 11 -----
+    # ----- Plot the exons the amplicon actually overlaps -----
     for i, (start, end) in enumerate(exon_boundaries):
-        if i not in [9, 10]:  # Skip all exons except 10 and 11
+        if end < amp_start or start > amp_end:  # not covered by the amplicon
             continue
         rect = mpatches.Rectangle(
             (start, 0.4),

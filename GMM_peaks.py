@@ -33,6 +33,7 @@ def fit_gmm_itds(
     assign_width_factor,
     assign_mode,        # "manual", "predict_proba", or "hybrid"
     prob_threshold,
+    wt_amplicon_length=336,
     force_k=None,
     reg=1e-3,
     seed=42
@@ -213,13 +214,18 @@ def fit_gmm_itds(
     comps["effective_read_count"] = [eff_counts[i] for i in comps.index]
     comps["effective_allele_freq"] = comps["effective_read_count"] / total_eff
 
-    #give alias to peaks and sort by fraction, identify wt peak as the one closest to 336bp, calculate putative ITD size and store in the dataframe
-    # Identify WT peak (closest to 336 bp)
-    wt_peak_id = (comps["mean_bp"] - 336).abs().idxmin()
+    # Give each peak an alias and flag the WT peak as the component whose mean
+    # read length sits closest to the configured WT amplicon length.
+    wt_peak_id = (comps["mean_bp"] - wt_amplicon_length).abs().idxmin()
 
     #Compute putative ITD size (bp difference relative to WT)
     comps["putative_itd_size"] = comps["mean_bp"] - comps.loc[wt_peak_id, "mean_bp"]
     comps["is_wt"] = comps.index == wt_peak_id
+    logger.info(
+        "WT peak: mean=%.1f bp (configured WT amplicon length=%d bp, offset=%+.1f bp)",
+        comps.loc[wt_peak_id, "mean_bp"], wt_amplicon_length,
+        comps.loc[wt_peak_id, "mean_bp"] - wt_amplicon_length,
+    )
 
     #Assign aliases before sorting(store in a new column, not the DataFrame index)
     comps["peak_alias"] = [
@@ -261,6 +267,7 @@ def refine_peak_substructure_once(
     min_subpeak_distance=3.0,
     max_subpeak_sd=5.0,
     min_bic_gain_for_split=10.0,
+    wt_amplicon_length=336,
     reg=1e-3,
     seed=42,
 ):
@@ -286,7 +293,9 @@ def refine_peak_substructure_once(
 
     wt_rows = comps.loc[comps["peak_alias"].str.upper() == "WT"]
     if wt_rows.empty:
-        wt_mean = float(comps.loc[(comps["mean_bp"] - 336).abs().idxmin(), "mean_bp"])
+        wt_mean = float(
+            comps.loc[(comps["mean_bp"] - wt_amplicon_length).abs().idxmin(), "mean_bp"]
+        )
     else:
         wt_mean = float(wt_rows.iloc[0]["mean_bp"])
 
