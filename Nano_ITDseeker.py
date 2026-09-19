@@ -440,6 +440,7 @@ if __name__ == "__main__":
     base_threshold=msa_base_threshold,
     min_col_coverage=msa_min_col_coverage,
     ambiguous="N",
+    threads=threads,
     )   
 
     logger.info("Per-peak consensus sequences:")
