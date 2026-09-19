@@ -109,6 +109,38 @@ if __name__ == "__main__":
         help="Also run haplotype splitting on the WT peak, to look for ITDs hiding inside it (default: off).",
     )
     parser.add_argument(
+        "--rescue-mixed-consensus", dest="rescue_mixed_consensus",
+        action="store_true", default=True,
+        help=(
+            "If an ITD consensus comes back heavily ambiguous -- the signature of two "
+            "ITDs of the same length sharing one length peak -- re-split the sample "
+            "with --rescue-method and keep that result only if it reduces the Ns "
+            "(default: enabled)."
+        ),
+    )
+    parser.add_argument(
+        "--no-rescue-mixed-consensus", dest="rescue_mixed_consensus",
+        action="store_false", help="Disable the mixed-consensus rescue.",
+    )
+    parser.add_argument(
+        "--rescue-method", type=str, default="dada2",
+        choices=sorted(k for k in BACKENDS if k != "none"),
+        help=(
+            "Method used by the mixed-consensus rescue. dada2 is the default because "
+            "it is the only backend that matched the length-based baseline on every "
+            "real validation sample while still separating same-length ITDs in "
+            "simulation (default: dada2)."
+        ),
+    )
+    parser.add_argument(
+        "--rescue-n-fraction", type=float, default=0.05,
+        help=(
+            "Fraction of a consensus that must be N to trigger the rescue. Real "
+            "samples with well-separated ITDs produced 0%% N; a simulated peak mixing "
+            "three same-length ITDs produced 47%% (default: 0.05)."
+        ),
+    )
+    parser.add_argument(
         "--min-haplotype-reads", type=int, default=20,
         help="Minimum reads for a sequence cluster to become its own haplotype (default: 20).",
     )
@@ -254,6 +286,9 @@ if __name__ == "__main__":
     haplotype_method = args.haplotype_method
     cluster_wt_peak = args.cluster_wt_peak
     min_haplotype_reads = args.min_haplotype_reads
+    rescue_mixed_consensus = args.rescue_mixed_consensus
+    rescue_method = args.rescue_method
+    rescue_n_fraction = args.rescue_n_fraction
     isonclust_k = args.isonclust_k
     isonclust_w = args.isonclust_w
     isonclust_aligned_threshold = args.isonclust_aligned_threshold
@@ -433,16 +468,18 @@ if __name__ == "__main__":
         # --disable-subpeak-refinement predates --haplotype-method and still wins.
         effective_method = "none"
 
-    logger.info(f"Splitting peaks into haplotypes using method: {effective_method}")
-    if effective_method != "none":
-        refine_result = split_peaks(
-            effective_method,
-            comps=comps,
-            reads_df=reads_df,
-            peak_subsets=peak_subsets,
+    def split_with(method, base_comps, base_reads_df, base_peak_subsets, work_tag=""):
+        """Run one haplotype-splitting method over the first-pass GMM peaks."""
+        if method == "none":
+            return base_comps, base_reads_df, base_peak_subsets
+        result = split_peaks(
+            method,
+            comps=base_comps,
+            reads_df=base_reads_df,
+            peak_subsets=base_peak_subsets,
             wt_amplicon_length=wt_amplicon_length,
             threads=threads,
-            work_dir=os.path.join(temp_dir, "haplotypes"),
+            work_dir=os.path.join(temp_dir, f"haplotypes{work_tag}"),
             cluster_wt_peak=cluster_wt_peak,
             min_child_fraction=min_subpeak_fraction,
             min_child_reads=min_haplotype_reads,
@@ -467,9 +504,16 @@ if __name__ == "__main__":
                 amplici_length_percentile=args.amplici_length_percentile,
             ),
         )
-        comps = refine_result.comps
-        reads_df = refine_result.reads_df
-        peak_subsets = refine_result.peak_subsets
+        return result.comps, result.reads_df, result.peak_subsets
+
+    # Keep the first-pass peaks: the mixed-consensus rescue re-splits from here,
+    # not from an already-split state.
+    gmm_comps, gmm_reads_df, gmm_peak_subsets = comps, reads_df, peak_subsets
+
+    logger.info(f"Splitting peaks into haplotypes using method: {effective_method}")
+    comps, reads_df, peak_subsets = split_with(
+        effective_method, comps, reads_df, peak_subsets
+    )
 
     if comps.empty:
         finalize_no_itd("No GMM peaks remained after refinement.")
@@ -507,33 +551,120 @@ if __name__ == "__main__":
         finalize_no_itd("No ITD peaks were detected beyond the WT peak.")
         
 
-    # Process per-peak reads and collect insertion calls.
-    all_itd_insertions = []
+    def insertions_and_consensus(cur_comps, cur_reads_df, cur_peak_subsets):
+        """Extract per-read insertions per peak, then build the MSA consensus.
 
-    for alias, read_ids in peak_subsets.items():  # list of IDs per GMM peak
-        if alias.upper() == "WT":
-            continue
-        if not read_ids:
-            logger.info(f"Skipping ITD peak {alias}: no reads assigned after filtering.")
-            continue
-        logger.info(f"Processing ITD peak: {alias} ({len(read_ids)} reads)")
-        df_itd = extract_itd_insertions_from_subset_parallel(
-            reads_df=reads_df,                 # full read table
-            read_ids_subset=read_ids,          # subset of read IDs for this ITD
-            ref_seq=ref_seq,
-            peak_alias=alias,
-            comps=comps,
+        Returns (insertions_df, df_cons), or (None, None) when a peak set yields
+        no insertions at all.
+        """
+        collected = []
+        for alias, read_ids in cur_peak_subsets.items():
+            if alias.upper() == "WT":
+                continue
+            if not read_ids:
+                logger.info(f"Skipping ITD peak {alias}: no reads assigned after filtering.")
+                continue
+            logger.info(f"Processing ITD peak: {alias} ({len(read_ids)} reads)")
+            collected.append(extract_itd_insertions_from_subset_parallel(
+                reads_df=cur_reads_df,
+                read_ids_subset=read_ids,
+                ref_seq=ref_seq,
+                peak_alias=alias,
+                comps=cur_comps,
+                threads=threads,
+                itd_sd_factor=1.5,
+                min_itd_size=min_itd_size,
+                max_itd_size=max_itd_length,
+            ))
+        if not collected:
+            return None, None
+        ins_df = pd.concat(collected, ignore_index=True)
+
+        logger.info("Building ITD consensus sequences per peak...")
+        cons = build_itd_consensus_sequences(
+            all_itd_insertions=ins_df,
+            comps=cur_comps,
+            out_dir=flt3_data_folder,
+            sample_name=sample_name,
+            max_unique=msa_max_unique,
+            min_weight_coverage=msa_min_weight_coverage,
+            base_threshold=msa_base_threshold,
+            min_col_coverage=msa_min_col_coverage,
+            ambiguous="N",
             threads=threads,
-            itd_sd_factor=1.5,
-            min_itd_size=min_itd_size,
-            max_itd_size=max_itd_length,
         )
-        logger.debug(df_itd)
-        all_itd_insertions.append(df_itd)
+        return ins_df, cons
 
-    if not all_itd_insertions:
+    def consensus_n_stats(cons):
+        """Total Ns, and the worst per-peak N fraction, across ITD consensuses."""
+        if cons is None or cons.empty:
+            return 0, 0.0
+        total = 0
+        worst = 0.0
+        for seq in cons["consensus_seq"].fillna(""):
+            n = seq.count("N")
+            total += n
+            if seq:
+                worst = max(worst, n / len(seq))
+        return total, worst
+
+    insertions_df, df_cons = insertions_and_consensus(comps, reads_df, peak_subsets)
+    if insertions_df is None:
         finalize_no_itd("No ITD insertions were detected after peak processing.")
-    insertions_df = pd.concat(all_itd_insertions, ignore_index=True)
+
+    # --- Mixed-consensus rescue ------------------------------------------------
+    # Ns in a consensus mean the reads behind that peak disagree, and the usual
+    # reason is two ITDs of the same length sharing one length peak -- which no
+    # length-based method can separate. Sequence clustering can, so when the
+    # consensus shows that signature the sample is re-split with the rescue
+    # method and the result kept ONLY if it actually reduces the Ns. That makes
+    # the rescue unable to make things worse by the measure that triggered it,
+    # and it costs nothing on samples that show no mixing.
+    n_total, n_worst = consensus_n_stats(df_cons)
+    if n_total:
+        logger.info(
+            "Consensus ambiguity: %d N%s total, worst peak %.1f%% N.",
+            n_total, "" if n_total == 1 else "s", 100 * n_worst,
+        )
+    if rescue_mixed_consensus and effective_method != rescue_method and n_worst > rescue_n_fraction:
+        logger.warning(
+            "A consensus is %.1f%% N (threshold %.1f%%), which is what two ITDs of "
+            "the same length in one peak look like. Re-splitting with '%s'.",
+            100 * n_worst, 100 * rescue_n_fraction, rescue_method,
+        )
+        try:
+            alt_comps, alt_reads_df, alt_subsets = split_with(
+                rescue_method, gmm_comps, gmm_reads_df, gmm_peak_subsets,
+                work_tag="_rescue",
+            )
+            alt_ins, alt_cons = insertions_and_consensus(alt_comps, alt_reads_df, alt_subsets)
+            alt_total, alt_worst = consensus_n_stats(alt_cons)
+        except Exception as exc:
+            # The rescue is an optional extra; a missing R installation or a tool
+            # failure must not lose the perfectly good primary result.
+            logger.warning(
+                "Rescue with '%s' could not run (%s). Keeping the '%s' result.",
+                rescue_method, exc, effective_method,
+            )
+            alt_ins = None
+            alt_total = None
+
+        if alt_ins is not None and alt_total < n_total:
+            logger.warning(
+                "Rescue accepted: '%s' cut consensus Ns from %d to %d across %d peaks.",
+                rescue_method, n_total, alt_total, len(alt_cons),
+            )
+            comps, reads_df, peak_subsets = alt_comps, alt_reads_df, alt_subsets
+            insertions_df, df_cons = alt_ins, alt_cons
+        elif alt_ins is not None:
+            logger.warning(
+                "Rescue rejected: '%s' did not reduce consensus Ns (%d vs %d). "
+                "Keeping the '%s' result.",
+                rescue_method, alt_total, n_total, effective_method,
+            )
+            # the rejected run overwrote the on-disk consensus artefacts
+            insertions_df, df_cons = insertions_and_consensus(comps, reads_df, peak_subsets)
+
     logger.debug("Per-read insertion found (first 20 reads):")
     logger.debug(insertions_df[:20])
 
@@ -549,21 +680,6 @@ if __name__ == "__main__":
         out_dir=flt3_data_folder,
         sample_name=sample_name
     )
-
-    # Build consensus sequences per peak using MSA
-    logger.info("Building ITD consensus sequences per peak...")
-    df_cons = build_itd_consensus_sequences(
-    all_itd_insertions=insertions_df,
-    comps=comps,
-    out_dir=flt3_data_folder,
-    sample_name=sample_name,
-    max_unique=msa_max_unique,
-    min_weight_coverage=msa_min_weight_coverage,
-    base_threshold=msa_base_threshold,
-    min_col_coverage=msa_min_col_coverage,
-    ambiguous="N",
-    threads=threads,
-    )   
 
     logger.info("Per-peak consensus sequences:")
     logger.debug(df_cons)
