@@ -11,3 +11,8 @@ temp/
 *.bam
 *.bai
 *.fastq
+
+# Validation data and run outputs
+test_data/
+test_output/
+*.xlsx
