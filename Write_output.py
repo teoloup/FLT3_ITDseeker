@@ -319,6 +319,7 @@ def call_no_itd(
     logger=None,
     remove_intermediate_files=False,
     reason="No ITDs detected.",
+    temp_dir_is_ours=True,
 ):
     if logger is None:
         logger = logging.getLogger(__name__)
@@ -375,7 +376,7 @@ img {{ max-width: 100%; border-radius: 6px; box-shadow: 0px 1px 3px rgba(0,0,0,0
             f.write(html)
         logger.info(f"Empty HTML report generated: {output_path}")
 
-    if os.path.exists(temp_dir):
+    if os.path.exists(temp_dir) and temp_dir_is_ours:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"Temp directory and FLT3 data folder retained for debugging: {temp_dir}")
         else:
@@ -385,7 +386,7 @@ img {{ max-width: 100%; border-radius: 6px; box-shadow: 0px 1px 3px rgba(0,0,0,0
             except Exception as e:
                 logger.error(f"Error cleaning up temp directory: {e}")
     else:
-        logger.warning(f"Temp directory does not exist, skipping cleanup: {temp_dir}")
+        logger.debug(f"Leaving temp directory in place: {temp_dir}")
 
     if remove_intermediate_files:
         try:

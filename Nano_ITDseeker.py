@@ -109,7 +109,7 @@ if __name__ == "__main__":
         "--min-bic-gain-for-subpeak-split", type=float, default=10.0, help="Minimum BIC gain (k=1 minus k=2) to accept a local split (default: 10.0)."
     )
     parser.add_argument(
-        "--msa-max-unique", type=int, default=300, help="Maximum unique insertion sequences used per peak for MSA consensus (default: 300)."
+        "--msa-max-unique", type=int, default=150, help="Maximum unique insertion sequences used per peak for MSA consensus (default: 150)."
     )
     parser.add_argument(
         "--msa-min-weight-coverage", type=float, default=0.98, help="Minimum cumulative weight coverage when selecting insertion panel for MSA (default: 0.98)."
@@ -198,7 +198,7 @@ if __name__ == "__main__":
             logger.info(f"Output folder: {output_folder}")
         except Exception as e:
             logger.error(f"Error creating output folder: {e}")
-            quit(1)
+            sys.exit(1)
     if not flt3_data_folder.exists():
         try:
             logger.info(f"Creating FLT3 data folder: {flt3_data_folder}")
@@ -206,14 +206,19 @@ if __name__ == "__main__":
             logger.info(f"FLT3 data folder: {flt3_data_folder}")
         except Exception as e:
             logger.error(f"Error creating FLT3 data folder: {e}")
-            quit(1)
+            sys.exit(1)
 
     if not Path(bam_file).exists():
         logger.error(f"BAM file does not exist: {bam_file}")
-        quit(1)
+        sys.exit(1)
 
+    # A path the user passed with --temp-dir may be shared or hold unrelated
+    # files, so it is only ours to delete if this run created it. The default
+    # location under the output folder is always ours.
+    user_supplied_temp_dir = temp_dir is not None
     if temp_dir is None:
         temp_dir = os.path.join(output_folder, "temp")
+    temp_dir_is_ours = (not user_supplied_temp_dir) or not Path(temp_dir).exists()
 
     logger.info(f"Sample name: {sample_name}")
     logger.info(f"Human genome assembly: {genome}")
@@ -242,6 +247,7 @@ if __name__ == "__main__":
             html_report,
             logger,
             remove_intermediate_files,
+            temp_dir_is_ours=temp_dir_is_ours,
             reason=reason,
         )
         logger.info("Exiting program with empty outputs (no ITDs detected).")
@@ -273,7 +279,7 @@ if __name__ == "__main__":
         exon_boundaries = flt3_exons_hg19
     else:
         logger.error(f"Unsupported genome build: {genome}")
-        quit(1)
+        sys.exit(1)
     # FLT3 is transcribed from the minus strand of chr13, so exon 1 is the
     # highest-coordinate entry: numbering runs opposite to the sorted list.
     exon_labels = [
@@ -295,11 +301,11 @@ if __name__ == "__main__":
     except FileNotFoundError as e:
         logger.error(f"Required external tool not found: {e}")
         logger.error("Aborting without writing negative (no-ITD) outputs.")
-        quit(1)
+        sys.exit(1)
     except Exception as e:
         logger.error(f"Read extraction/trimming failed: {e}")
         logger.error("Aborting without writing negative (no-ITD) outputs.")
-        quit(1)
+        sys.exit(1)
 
     if not seqio_reads:
         finalize_no_itd("No FLT3 reads available after extraction/trimming.")
@@ -322,11 +328,11 @@ if __name__ == "__main__":
             finalize_no_itd(str(e))
         logger.error(f"GMM fitting failed: {e}")
         logger.error("Aborting without writing negative (no-ITD) outputs.")
-        quit(1)
+        sys.exit(1)
     except Exception as e:
         logger.error(f"GMM fitting failed: {e}")
         logger.error("Aborting without writing negative (no-ITD) outputs.")
-        quit(1)
+        sys.exit(1)
     gmm = gmm_fit.gmm
     comps = gmm_fit.comps
     reads_df = gmm_fit.reads_df
@@ -522,7 +528,7 @@ if __name__ == "__main__":
             )
 
     # Cleanup temp directory and intermediate files, if log is debug, keep all files
-    if os.path.exists(temp_dir):
+    if os.path.exists(temp_dir) and temp_dir_is_ours:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"Temp directory and FLT3 data folder retained for debugging: {temp_dir}")
         else:
@@ -532,7 +538,7 @@ if __name__ == "__main__":
             except Exception as e:
                 logger.error(f"Error cleaning up temp directory: {e}")
     else:
-        logger.warning(f"Temp directory does not exist, skipping cleanup: {temp_dir}")  
+        logger.debug(f"Leaving temp directory in place: {temp_dir}")
     
     if remove_intermediate_files:
         try:
