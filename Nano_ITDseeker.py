@@ -498,7 +498,7 @@ if __name__ == "__main__":
     logger.info("Writing validated ITD calls to VCF...")
     vcf_path = f"{sample_name}_FLT3_ITD_calls.vcf"
     output_path = os.path.join(output_folder, vcf_path)
-    export_itd_vcf(summary_df, ref_dict, itd_refs, comps, output_path)
+    export_itd_vcf(summary_df, ref_dict, itd_refs, comps, output_path, genome_build=genome)
 
     if html_report:
         generate_itd_html_report(

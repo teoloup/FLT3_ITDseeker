@@ -30,22 +30,48 @@ def build_default_aligner() -> Align.PairwiseAligner:
     aligner.mode = "global"
     return aligner
 
-def find_insertions_between_blocks(aln):
-    """Detect insertions (in query) as large jumps between aligned blocks."""
-    t_blocks, q_blocks = aln.aligned
+def insertions_from_aligned_blocks(aln_blocks):
+    """Detect insertions (in query) as large jumps between aligned blocks.
+
+    Blocks returned by Bio.Align are gapless by construction: inside a single
+    block the target and query spans are always the same length. All indel
+    evidence therefore lives in the jumps *between* consecutive blocks, never
+    inside one -- so any check that subtracts the two spans within a block is
+    identically zero and silently passes everything.
+
+    Parameters
+    ----------
+    aln_blocks : array-like or None
+        An ``Alignment.aligned`` value, shape (2, n_blocks, 2), or an empty
+        sequence when no alignment was produced.
+
+    Returns
+    -------
+    list[tuple[int, int, int]]
+        (target_end, query_end, insertion_length) for every inter-block gap
+        where the query advanced further than the target.
+    """
+    if aln_blocks is None or len(aln_blocks) != 2:
+        return []
+
+    t_blocks, q_blocks = aln_blocks[0], aln_blocks[1]
     insertions = []
 
     for i in range(len(t_blocks) - 1):
-        t_end = t_blocks[i][1]
-        t_next = t_blocks[i + 1][0]
-        q_end = q_blocks[i][1]
-        q_next = q_blocks[i + 1][0]
+        t_end = int(t_blocks[i][1])
+        t_next = int(t_blocks[i + 1][0])
+        q_end = int(q_blocks[i][1])
+        q_next = int(q_blocks[i + 1][0])
 
         # If query advanced more than target between blocks -> insertion
-        if (q_next - q_end) > (t_next - t_end):
-            ins_len = (q_next - q_end) - (t_next - t_end)
+        ins_len = (q_next - q_end) - (t_next - t_end)
+        if ins_len > 0:
             insertions.append((t_end, q_end, ins_len))
     return insertions
+
+def find_insertions_between_blocks(aln):
+    """Detect insertions (in query) as large jumps between aligned blocks."""
+    return insertions_from_aligned_blocks(aln.aligned)
 
 def chunk_iterable(data, n):
     """Split list into n roughly equal chunks."""
@@ -66,14 +92,10 @@ def percent_identity(aln):
     return ident / total if total else 0.0
 
 def find_insertions(aln):
-    ins = find_insertions_between_blocks(aln)
-    if not ins:
-        # fallback to within-block method (very short indels)
-        t_blocks, q_blocks = aln.aligned
-        for (ts, te), (qs, qe) in zip(t_blocks, q_blocks):
-            if (qe - qs) > (te - ts):
-                ins.append((ts, qs, qe - qs - (te - ts)))
-    return ins
+    # Insertions only ever appear between aligned blocks (see
+    # insertions_from_aligned_blocks); there is no within-block case to fall
+    # back to.
+    return find_insertions_between_blocks(aln)
 
 def _seq_in_reference_orientation(read_seq: str, read_strand: str) -> str:
     """
@@ -184,7 +206,8 @@ def validate_itd_supporting_reads(
     *,
     gap_window,
     max_gap_bp,
-    min_pid
+    min_pid,
+    max_wt_gap_bp=10,
 ):
     """
     Validate both WT and ITD reads by inspecting precomputed alignments.
@@ -204,16 +227,16 @@ def validate_itd_supporting_reads(
                 reasons.append("missing_alignment_blocks")
                 continue
 
-            # Compute total gaps (insertions relative to ref)
+            # Total inserted bases relative to WT, measured between blocks.
             total_gap_len = sum(
-                max(0, (q_end - q_start) - (t_end - t_start))
-                for (t_start, t_end), (q_start, q_end) in zip(*aln_blocks)
+                ins_len
+                for _t_end, _q_end, ins_len in insertions_from_aligned_blocks(aln_blocks)
             )
 
             if pid < min_pid:
                 validated.append(False)
                 reasons.append(f"low_pid({pid:.2f})")
-            elif total_gap_len > 10:
+            elif total_gap_len > max_wt_gap_bp:
                 validated.append(False)
                 reasons.append(f"wt_with_gaps({total_gap_len} bp)")
             else:
@@ -229,20 +252,26 @@ def validate_itd_supporting_reads(
                 reasons.append("missing_insertion_position")
                 continue
 
-            ins_pos = ins_row["median_ins_pos_ref"].iloc[0]
+            ins_pos = int(ins_row["median_ins_pos_ref"].iloc[0])
+            itd_len = int(ins_row["consensus_len"].iloc[0]) if "consensus_len" in ins_row else 0
 
             if aln_blocks is None or len(aln_blocks) != 2:
                 validated.append(False)
                 reasons.append("missing_alignment_blocks")
                 continue
 
-            # Check for insertions near ITD breakpoint
-            gaps_near = 0
-            for (t_start, t_end), (q_start, q_end) in zip(*aln_blocks):
-                if (q_end - q_start) > (t_end - t_start):
-                    gap_pos = (t_start + t_end) / 2
-                    if abs(gap_pos - ins_pos) <= gap_window:
-                        gaps_near += (q_end - q_start) - (t_end - t_start)
+            # Residual insertions in the read relative to the ITD reference.
+            # The read is aligned to wt[:ins_pos] + itd + wt[ins_pos:], so in
+            # ITD-reference coordinates the duplicated segment spans
+            # [ins_pos, ins_pos + itd_len); anything within gap_window of that
+            # span counts as sitting on a breakpoint.
+            lo = ins_pos - gap_window
+            hi = ins_pos + itd_len + gap_window
+            gaps_near = sum(
+                ins_len
+                for t_end, _q_end, ins_len in insertions_from_aligned_blocks(aln_blocks)
+                if lo <= t_end <= hi
+            )
 
             if pid < min_pid:
                 validated.append(False)

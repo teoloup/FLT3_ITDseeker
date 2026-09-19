@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Pipeline outputs
+flt3_data/
+temp/
+*.vcf
+*.bam
+*.bai
+*.fastq
