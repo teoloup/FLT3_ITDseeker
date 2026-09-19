@@ -1,0 +1,20 @@
+######## gmm2pass exit=0 52s
+   ITD_1_S1       len=189  n=852    uniq=466   Ns=0   CTGTTGCGTTCATCACTTTTCCAAAAGCACCTGATCCTAG
+   ITD_1_S2       len=123  n=182    uniq=169   Ns=0   AGTACGTGCATTTTAAAGATTTTCCAATGGAAAAGAAATG
+   CALL ITD_1_S1 pos=28033943 ITD_LEN=189 AF=0.08028
+
+######## isonclust exit=0 39s
+ITD_1: 8 cluster(s) from 1561 reads, 1 passed the size guardrails -- leaving the peak unsplit.
+   ITD_1          len=189  n=1418   uniq=817   Ns=0   CTGTTGCGTTCATCACTTTTCCAAAAGCACCTGATCCTAG
+   CALL ITD_1 pos=28033943 ITD_LEN=189 AF=0.08028
+
+######## dada2 exit=0 41s
+ITD_1: 1 cluster(s) from 1557 reads, 1 passed the size guardrails -- leaving the peak unsplit.
+   ITD_1          len=189  n=1418   uniq=817   Ns=0   CTGTTGCGTTCATCACTTTTCCAAAAGCACCTGATCCTAG
+   CALL ITD_1 pos=28033943 ITD_LEN=189 AF=0.08028
+
+######## amplici exit=0 35s
+ITD_1: 1 cluster(s) from 1561 reads, 1 passed the size guardrails -- leaving the peak unsplit.
+   ITD_1          len=189  n=1418   uniq=817   Ns=0   CTGTTGCGTTCATCACTTTTCCAAAAGCACCTGATCCTAG
+   CALL ITD_1 pos=28033943 ITD_LEN=189 AF=0.08028
+

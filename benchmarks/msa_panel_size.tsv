@@ -1,0 +1,9 @@
+sample	msa_max_unique	panels_used	msa_block_s	wall_s	calls_vs_default_300
+14219	300	300;16	12.9	25.7	reference
+14219	150	150;16	3.4	16.5	IDENTICAL
+14219	50	50;16	0.5	12.8	IDENTICAL
+13697	300	27;75;35		14.3	reference
+13697	50	27;50;35		13.0	IDENTICAL
+11531	300	300;166	26.21	53.5	reference
+11531	150	150;150	9.08	35.6	IDENTICAL
+11531	50	50;50	1.38	29.8	AF 0.08028->0.08014, DP 18833->18830; ITD len/pos/ALT identical

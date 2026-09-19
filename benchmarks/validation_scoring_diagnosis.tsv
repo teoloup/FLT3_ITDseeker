@@ -1,0 +1,12 @@
+scorer	overall_correct_ref	WT	ITD_A	ITD_B	ITD_C	ITD_D	note
+block_pid_alpha1_CURRENT	0.717	0.960	0.380	0.967	0.953	0.327	shipped behaviour before this fix
+block_pid_alpha2	0.768	0.960	0.493	0.967	0.967	0.453	
+block_pid_alpha3	0.939	0.960	0.913	0.953	0.967	0.900	
+block_pid_alpha5	0.935	0.960	0.907	0.953	0.967	0.887	
+block_pid_alpha8	0.927	0.967	0.873	0.953	0.973	0.867	
+span_pid_alpha1	0.769	1.000	0.473	0.967	0.973	0.433	
+span_pid_alpha2_ADOPTED	0.945	1.000	0.900	0.960	0.973	0.893	adopted: best overall, WT perfect
+span_pid_alpha3	0.945	1.000	0.907	0.953	0.973	0.893	
+span_pid_alpha5	0.944	1.000	0.907	0.953	0.973	0.887	
+raw_biopython_score	0.407	1.000	0.000	0.500	0.533	0.000	aligner gap penalties far too lenient
+span_pid_no_gap_term	0.723	0.967	0.393	0.960	0.940	0.353	gap term is essential

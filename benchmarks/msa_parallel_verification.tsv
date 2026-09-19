@@ -1,0 +1,14 @@
+test	sample	detail	result
+bit-identity serial(-t1) vs parallel(-t16)	14219	FLT3_ITD_calls.vcf	IDENTICAL
+bit-identity serial(-t1) vs parallel(-t16)	14219	itd_consensus_seq.tsv	IDENTICAL
+bit-identity serial(-t1) vs parallel(-t16)	14219	validation_refs.fasta	IDENTICAL
+bit-identity serial(-t1) vs parallel(-t16)	13697	FLT3_ITD_calls.vcf	IDENTICAL
+bit-identity serial(-t1) vs parallel(-t16)	13697	itd_consensus_seq.tsv	IDENTICAL
+bit-identity serial(-t1) vs parallel(-t16)	13697	validation_refs.fasta	IDENTICAL
+calls vs pre-change serial-MSA build	10808	VCF records	IDENTICAL
+calls vs pre-change serial-MSA build	11531_all_hg38	VCF records	IDENTICAL
+calls vs pre-change serial-MSA build	13697_2runs_hg38	VCF records	IDENTICAL
+calls vs pre-change serial-MSA build	14219_2runs_hg38	VCF records	IDENTICAL
+calls vs pre-change serial-MSA build	14417_2runs_hg38	VCF records	IDENTICAL
+old serial-MSA code vs new parallel-MSA code, both -t 16	11531	VCF records	IDENTICAL
+old serial-MSA code vs new parallel-MSA code, both -t 16	13697	VCF records	IDENTICAL

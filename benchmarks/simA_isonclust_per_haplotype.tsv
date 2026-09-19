@@ -1,0 +1,5 @@
+haplotype	true_af	true_len	recovered	called_alias	called_len	called_af	called_af_gmm	af_error	af_gmm_error	len_error
+ITD_A	0.1993	45	1	ITD_2_H1	45	0.087	0.2459	-0.1123	0.0466	0
+ITD_B	0.1184	45	1	ITD_2_H2	45	0.1461	0.1164	0.0277	-0.002	0
+ITD_C	0.077	30	1	ITD_1	30	0.113	0.0785	0.036	0.0015	0
+ITD_D	0.0496	45	0							
