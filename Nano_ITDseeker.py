@@ -608,6 +608,10 @@ if __name__ == "__main__":
                 worst = max(worst, n / len(seq))
         return total, worst
 
+    # what actually produced the reported result, for the log and the report
+    applied_method = effective_method
+    rescue_note = None
+
     insertions_df, df_cons = insertions_and_consensus(comps, reads_df, peak_subsets)
     if insertions_df is None:
         finalize_no_itd("No ITD insertions were detected after peak processing.")
@@ -656,6 +660,14 @@ if __name__ == "__main__":
             )
             comps, reads_df, peak_subsets = alt_comps, alt_reads_df, alt_subsets
             insertions_df, df_cons = alt_ins, alt_cons
+            applied_method = rescue_method
+            rescue_note = (
+                f"A consensus was {100 * n_worst:.1f}% ambiguous, the signature of two "
+                f"ITDs of the same length sharing one length peak. The sample was "
+                f"re-split with <b>{rescue_method}</b>, which reduced ambiguous bases "
+                f"from {n_total} to {alt_total}. The results below are from that "
+                f"re-split."
+            )
         elif alt_ins is not None:
             logger.warning(
                 "Rescue rejected: '%s' did not reduce consensus Ns (%d vs %d). "
@@ -664,6 +676,12 @@ if __name__ == "__main__":
             )
             # the rejected run overwrote the on-disk consensus artefacts
             insertions_df, df_cons = insertions_and_consensus(comps, reads_df, peak_subsets)
+            rescue_note = (
+                f"A consensus was {100 * n_worst:.1f}% ambiguous, so the sample was "
+                f"re-split with <b>{rescue_method}</b>. That did not reduce ambiguity "
+                f"({alt_total} vs {n_total} ambiguous bases), so the "
+                f"<b>{effective_method}</b> result was kept."
+            )
 
     logger.debug("Per-read insertion found (first 20 reads):")
     logger.debug(insertions_df[:20])
@@ -757,6 +775,9 @@ if __name__ == "__main__":
             itd_refs=itd_refs,
             output_dir=output_folder,
             plots_dir=flt3_data_folder,
+            df_cons=df_cons,
+            haplotype_method=applied_method,
+            rescue_note=rescue_note,
             )
 
     # Cleanup temp directory and intermediate files, if log is debug, keep all files
