@@ -10,6 +10,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from Bio import Align
 from Helper_functions import (
     percent_identity,
+    span_identity,
     compute_adjusted_score,
     softmax,
     classify_read_support,
@@ -32,7 +33,7 @@ def build_validation_aligner() -> Align.PairwiseAligner:
     aligner.mode = "global"
     return aligner
 
-def _align_reads_chunk(reads_chunk, ref_dict, alpha=1):
+def _align_reads_chunk(reads_chunk, ref_dict, alpha=2.0):
     """
     Align a chunk of reads to all reference sequences (WT + ITDs),
     computing both raw and adjusted scores on the stored read orientation.
@@ -65,9 +66,15 @@ def _align_reads_chunk(reads_chunk, ref_dict, alpha=1):
 
         # Record results
         for alias, aln, raw_score in best_alignments:
-            # Keep PID as 0-1 fraction to match downstream thresholds (e.g. min_pid=0.9).
+            # Two different identities, for two different jobs:
+            #   pct_identity (block-based) answers "is this read good enough?" and
+            #     feeds the min_pid quality filter;
+            #   span identity answers "which reference does it fit best?" and feeds
+            #     the competitive score. Block identity cannot do the second job --
+            #     it reads 1.0 against every reference for a clean read.
             pid = percent_identity(aln) if aln else 0.0
-            adjusted_score = compute_adjusted_score(aln, alpha, pid=pid)
+            span_pid = span_identity(aln) if aln else 0.0
+            adjusted_score = compute_adjusted_score(aln, alpha, pid=span_pid)
             aligned_blocks = aln.aligned if aln else []
             results.append({
                 "read_id": rid,
@@ -76,6 +83,7 @@ def _align_reads_chunk(reads_chunk, ref_dict, alpha=1):
                 "score": raw_score,
                 "adjusted_score": adjusted_score,
                 "pct_identity": pid,
+                "span_identity": span_pid,
                 "aligned_blocks": aligned_blocks,
             })
 
