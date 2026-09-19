@@ -80,15 +80,19 @@ def chunk_iterable(data, n):
         yield data[i:i + k]
 
 def percent_identity(aln):
-    ref = aln.target
-    qry = aln.query
+    """Fraction of aligned (gapless) positions where target and query agree."""
+    # str() once: indexing a Seq per character goes through __getitem__ and
+    # dominates the cost of this function, which runs on every alignment.
+    ref = str(aln.target)
+    qry = str(aln.query)
     ident = 0
     total = 0
     for (rs, re), (qs, qe) in zip(*aln.aligned):
-        for r_i, q_i in zip(range(rs, re), range(qs, qe)):
-            total += 1
-            if ref[r_i] == qry[q_i]:
-                ident += 1
+        block_len = re - rs
+        total += block_len
+        ident += sum(
+            a == b for a, b in zip(ref[rs:re], qry[qs:qe])
+        )
     return ident / total if total else 0.0
 
 def find_insertions(aln):
@@ -134,14 +138,19 @@ def process_chunk(chunk, itd_min, itd_max, ref_seq, peak_alias):
             logger.warning(f"[WARN] Alignment failed for {read_id}: {e}")
     return out_rows
 
-def compute_adjusted_score(aln, alpha=0.5):
-    """Compute hybrid PID + gap-penalized score from a Biopython alignment."""
+def compute_adjusted_score(aln, alpha=0.5, pid=None):
+    """Compute hybrid PID + gap-penalized score from a Biopython alignment.
+
+    Pass ``pid`` when percent identity has already been computed for this
+    alignment; recomputing it doubles the cost of the validation pass.
+    """
     if aln is None:
         return 0.0
 
     try:
         # --- Percent identity (0-1) ---
-        pid = percent_identity(aln)
+        if pid is None:
+            pid = percent_identity(aln)
 
         # --- Find insertions (query gaps between blocks) ---
         insertions = find_insertions_between_blocks(aln)
@@ -436,7 +445,9 @@ def extract_itd_insertions_from_subset_parallel(
         return empty_insertions_frame()
 
     df = pd.DataFrame(results)
-    df.sort_values(["ins_pos_ref", "ins_len"], inplace=True, ignore_index=True)
+    # read_id breaks ties so the row order (and therefore the MSA panel's
+    # first-seen tie-breaking downstream) does not depend on worker order.
+    df.sort_values(["ins_pos_ref", "ins_len", "read_id"], inplace=True, ignore_index=True)
     return df
 
 def plot_itd_size_distribution(all_itd_insertions, out_dir, sample_name=None, bins=50):

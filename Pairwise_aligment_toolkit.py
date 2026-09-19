@@ -67,7 +67,7 @@ def _align_reads_chunk(reads_chunk, ref_dict, alpha=1):
         for alias, aln, raw_score in best_alignments:
             # Keep PID as 0-1 fraction to match downstream thresholds (e.g. min_pid=0.9).
             pid = percent_identity(aln) if aln else 0.0
-            adjusted_score = compute_adjusted_score(aln, alpha)
+            adjusted_score = compute_adjusted_score(aln, alpha, pid=pid)
             aligned_blocks = aln.aligned if aln else []
             results.append({
                 "read_id": rid,
@@ -107,9 +107,17 @@ def align_reads_multi_ref_parallel(reads_df, ref_dict, df_cons, logger, threads=
     reads_list = list(zip(reads_df["read_id"], reads_df["read_seq"], reads_df["strand"]))
     if threads < 1:
         threads = 1
-    chunk_size = max(1, int(np.ceil(len(reads_list) / threads)))
+    # Several chunks per worker rather than exactly one: with one batch each,
+    # a single slow worker stalls the whole pass and nothing can be stolen
+    # from it. Smaller batches let the pool rebalance; total IPC is unchanged.
+    chunks_per_worker = 4
+    chunk_size = max(1, int(np.ceil(len(reads_list) / (threads * chunks_per_worker))))
     batches = [reads_list[i:i + chunk_size] for i in range(0, len(reads_list), chunk_size)]
     n_batches = len(batches)
+    logger.debug(
+        "[align_reads_multi_ref_parallel] %d batches of <=%d reads across %d workers",
+        n_batches, chunk_size, threads,
+    )
     n_reads = len(reads_list)
     n_refs = len(ref_dict)
     est_comparisons = n_reads * n_refs
@@ -144,6 +152,13 @@ def align_reads_multi_ref_parallel(reads_df, ref_dict, df_cons, logger, threads=
     df_results = pd.DataFrame(all_results)
     logger.info(f"[align_reads_multi_ref_parallel] Collected {len(df_results)} total alignments.")
 
+    # Workers complete in nondeterministic order, so row order here varies
+    # between runs. Pin it before any ranking, otherwise exact score ties are
+    # broken by whichever worker happened to finish first.
+    df_results = df_results.sort_values(
+        ["read_id", "ref_alias"], kind="mergesort"
+    ).reset_index(drop=True)
+
     if df_results.empty:
         logger.error("No alignments produced! Check read sequences or reference dictionary.")
         return pd.DataFrame()
@@ -160,10 +175,15 @@ def align_reads_multi_ref_parallel(reads_df, ref_dict, df_cons, logger, threads=
     n_refs = df_results["ref_alias"].nunique()
     logger.info(f"[align_reads_multi_ref_parallel] Detected {n_refs} reference sequences.")
 
+    # A read supports whichever reference scores highest. Ties break towards WT
+    # (a coin flip should not become a variant call), then alphabetically, so the
+    # outcome never depends on which worker finished first.
+    df_results["_wt_first"] = (df_results["ref_alias"] == "WT").astype(int)
+
     # --- Metric selection ---
     if n_refs == 2:
         # ==========================
-        # CASE A — Binary WT vs ITD
+        # CASE A - Binary WT vs ITD
         # ==========================
         logger.info("Using probability delta metric (WT vs ITD).")
 
@@ -171,29 +191,9 @@ def align_reads_multi_ref_parallel(reads_df, ref_dict, df_cons, logger, threads=
         df_results["metric_type"] = "prob_delta"
         metric_used = "prob_delta"
 
-        # Only need top 2 per read (WT and ITD)
-        df_results = df_results.sort_values(["read_id", "metric_value"], ascending=[True, False])
-
-        top_hits = (
-            df_results
-            .groupby("read_id", group_keys=False)
-            .head(2)
-            .reset_index(drop=True)
-        )
-
-        df_best = top_hits.groupby("read_id").nth(0).reset_index()
-        df_second = top_hits.groupby("read_id").nth(1).reset_index()
-
-        df_best = df_best.merge(
-            df_second[["read_id", "ref_alias", "metric_value"]],
-            on="read_id",
-            suffixes=("", "_second"),
-            how="left"
-        )
-
     else:
         # ==========================
-        # CASE B — Multi-ITD (>2 refs)
+        # CASE B - Multi-ITD (>2 refs)
         # ==========================
         logger.info("Using z-score metric for multi-ITD comparison.")
 
@@ -204,27 +204,26 @@ def align_reads_multi_ref_parallel(reads_df, ref_dict, df_cons, logger, threads=
         df_results["metric_type"] = "z_score"
         metric_used = "z_score"
 
-        # Keep all refs for meaningful z-scores
-        df_best = (
-            df_results.loc[df_results.groupby("read_id")["metric_value"].idxmax()]
-            .reset_index(drop=True)
-        )
+    # --- Rank references per read, best first ---
+    ranked = df_results.sort_values(
+        ["read_id", "metric_value", "_wt_first", "ref_alias"],
+        ascending=[True, False, False, True],
+        kind="mergesort",
+    )
+    ranked["_rank"] = ranked.groupby("read_id").cumcount()
 
-        # Find the 2nd best for delta comparison
-        second_best = (
-            df_results
-            .sort_values(["read_id", "metric_value"], ascending=[True, False])
-            .groupby("read_id", group_keys=False)
-            .nth(1)
-            .reset_index()
-        )
+    # cumcount rather than GroupBy.nth: nth changed between pandas 1.x and 2.x
+    # (index vs filter semantics); this behaves the same on both.
+    df_best = ranked[ranked["_rank"] == 0].reset_index(drop=True)
+    df_second = ranked[ranked["_rank"] == 1].reset_index(drop=True)
 
-        df_best = df_best.merge(
-            second_best[["read_id", "ref_alias", "metric_value"]],
-            on="read_id",
-            suffixes=("", "_second"),
-            how="left"
-        )
+    df_best = df_best.merge(
+        df_second[["read_id", "ref_alias", "metric_value"]],
+        on="read_id",
+        suffixes=("", "_second"),
+        how="left",
+    )
+    df_best = df_best.drop(columns=["_wt_first", "_rank"], errors="ignore")
 
     # --- Compute delta between best and 2nd best ---
     df_best["second_best_ref"] = df_best["ref_alias_second"]
@@ -251,6 +250,12 @@ def align_reads_multi_ref_parallel(reads_df, ref_dict, df_cons, logger, threads=
         max_gap_bp=5,
         min_pid=0.9,
     )
+
+    # aligned_blocks holds raw numpy index arrays used only by the validation
+    # step above. Left in place it is written verbatim into
+    # *_validation_read_support.tsv as array reprs (tens of MB of unreadable
+    # text on a deep run), so drop it once validation has consumed it.
+    df_best = df_best.drop(columns=["aligned_blocks"], errors="ignore")
 
     # --- Summary ---
     logger.info(f"[align_reads_multi_ref_parallel] Validation complete using {metric_used}.")

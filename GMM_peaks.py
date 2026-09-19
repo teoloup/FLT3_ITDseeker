@@ -79,7 +79,10 @@ def fit_gmm_itds(
         ).fit(X)
     else:
         best = None
-        for k in range(1, max_itds_detected + 1):
+        # One component is the WT peak, so k must reach max_itds_detected + 1
+        # for max_itds_detected ITDs to be representable.
+        max_components = max_itds_detected + 1
+        for k in range(1, max_components + 1):
             g = GaussianMixture(
                 n_components=k,
                 covariance_type="full",
@@ -132,17 +135,36 @@ def fit_gmm_itds(
             for g in group:
                 merge_map[int(comps.loc[g, "orig_id"])] = len(merged) - 1
         else:
-            logger.info(f"Merging close GMM peaks: {group} (means: {comps.loc[group, 'mean_bp'].tolist()})")
+            logger.info(
+                "Merging close GMM peaks: %s (means: %s, SDs: %s)",
+                group,
+                [round(v, 1) for v in comps.loc[group, "mean_bp"]],
+                [round(v, 2) for v in comps.loc[group, "sd_bp"]],
+            )
             total_frac = comps.loc[group, "fraction"].sum()
             weights_norm = comps.loc[group, "fraction"] / total_frac
             merged_mu = (comps.loc[group, "mean_bp"] * weights_norm).sum()
-            merged_sd = (comps.loc[group, "sd_bp"] * weights_norm).sum()
+            # Law of total variance: a mixture's spread is the weighted mean of the
+            # child variances PLUS the spread of the child means about the merged
+            # mean. Averaging the child SDs ignores the second term and returns a
+            # merged peak far narrower than the population it represents, which then
+            # causes manual/hybrid assignment (mean +/- factor*SD) to discard most of
+            # the reads that motivated the merge in the first place.
+            within_var = (comps.loc[group, "sd_bp"] ** 2 * weights_norm).sum()
+            between_var = (((comps.loc[group, "mean_bp"] - merged_mu) ** 2) * weights_norm).sum()
+            merged_sd = float(np.sqrt(within_var + between_var))
             merged_row = {
                 "mean_bp": merged_mu,
                 "sd_bp": merged_sd,
                 "fraction": total_frac,
                 "read_count": int(round(total_frac * n))
             }
+            logger.info(
+                "Merged peak: mean=%.1f bp, sd=%.2f bp (weighted mean of child SDs "
+                "would have been %.2f bp), fraction=%.4f",
+                merged_mu, merged_sd,
+                float((comps.loc[group, "sd_bp"] * weights_norm).sum()), total_frac,
+            )
             merged.append(merged_row)
             for g in group:
                 merge_map[int(comps.loc[g, "orig_id"])] = len(merged) - 1
