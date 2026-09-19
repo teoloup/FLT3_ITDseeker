@@ -1,0 +1,22 @@
+# Python dependencies for Nano_ITDseeker.
+# Pinned to the versions this pipeline has been exercised against.
+#
+# NOTE: pymuscle5 is NOT on PyPI. It only exists as source on GitHub, so it
+# cannot be installed with a plain `pip install pymuscle5` despite being listed
+# as a requirement. It also needs a C toolchain (build-essential) and Cython.
+
+numpy<2                       # pymuscle5 / pysam built against the 1.x ABI
+pandas>=1.5
+scipy>=1.9
+matplotlib>=3.6
+seaborn>=0.12
+scikit-learn>=1.2
+biopython>=1.80,<1.90         # Alignment.aligned semantics; gap-score attrs deprecate in 1.85+
+pysam>=0.21
+cutadapt>=4.0                 # also usable as a standalone binary
+
+# Build-time requirement for pymuscle5
+cython
+
+# MUSCLE v5 bindings -- source only, no PyPI release
+pymuscle5 @ git+https://github.com/althonos/pymuscle5

@@ -92,19 +92,31 @@ class FLT3ReadExtractor:
             self.bam_file,
             region
         ]
-        # Use shell redirection for samtools fastq output
-        fastq_cmd_str = f"samtools fastq - > '{fastq_out}'"
-        logger.info(f"Running samtools view + fastq for region: {' '.join(samtools_view_cmd)} | {fastq_cmd_str}")
-        view_proc = subprocess.Popen(samtools_view_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        fastq_proc = subprocess.Popen(fastq_cmd_str, shell=True, stdin=view_proc.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        _, fastq_stderr = fastq_proc.communicate()
+        # No shell: the output path is handed to the child as a real file handle,
+        # so a path containing a quote or a space cannot break (or inject into)
+        # a command line.
+        fastq_cmd = ["samtools", "fastq", "-"]
+        logger.info(
+            "Running samtools view + fastq for region: %s | %s > %s",
+            " ".join(samtools_view_cmd), " ".join(fastq_cmd), fastq_out,
+        )
+        view_proc = subprocess.Popen(
+            samtools_view_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        with open(fastq_out, "wb") as fastq_fh:
+            fastq_proc = subprocess.Popen(
+                fastq_cmd, stdin=view_proc.stdout, stdout=fastq_fh,
+                stderr=subprocess.PIPE,
+            )
+            _, fastq_stderr = fastq_proc.communicate()
         view_proc.stdout.close()
         view_stderr = view_proc.stderr.read()
         view_proc.stderr.close()
         view_proc.wait()
         if fastq_proc.returncode != 0 or view_proc.returncode != 0:
             logger.error(f"Samtools view/fastq failed: {view_stderr.decode()} {fastq_stderr.decode()}")
-            shutil.rmtree(temp_dir)
+            # Intentionally not deleting temp_dir: it may be a directory the user
+            # supplied via --temp-dir and did not ask us to remove.
             raise RuntimeError("Samtools view/fastq failed for region extraction.")
         logger.info(f"Extracted reads written to {fastq_out}")
 
@@ -149,21 +161,33 @@ class FLT3ReadExtractor:
         result = subprocess.run(cutadapt_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if result.returncode != 0:
             logger.error(f"Cutadapt failed: {result.stderr.decode()}")
-            if self.temp_dir and os.path.exists(self.temp_dir):
-                shutil.rmtree(self.temp_dir)
+            # See extract_reads: temp_dir may be user-supplied, so leave it alone.
             raise RuntimeError("Cutadapt failed for primer trimming.")
 
-        # Parse trimmed FASTQ
-        untrimmed_reads = list(SeqIO.parse(fastq_in, "fastq"))
-        trimmed_reads = list(SeqIO.parse(trimmed_fastq, "fastq"))
-        reads: Dict[str, Dict[str, str]] = {}
-        for rec in SeqIO.parse(trimmed_fastq, "fastq"):
-            strand = "-" if rec.description.endswith(" rc") else "+"
-            rec_id = rec.id.replace(" rc", "")
-            # Keep cutadapt sequence orientation as output, store original orientation via strand tag.
-            reads[rec_id] = {"seq": str(rec.seq), "strand": strand}
+        # Stream both files rather than materialising them: the only thing the
+        # input file was ever used for is a count in the log line below, and a
+        # deep amplicon run holds hundreds of thousands of records.
+        n_input = sum(1 for _ in SeqIO.parse(fastq_in, "fastq"))
 
-        logger.info(f"Cutadapt trimmed {len(trimmed_reads)} reads (input: {len(untrimmed_reads)})")
+        reads: Dict[str, Dict[str, str]] = {}
+        n_trimmed = 0
+        n_duplicate_ids = 0
+        for rec in SeqIO.parse(trimmed_fastq, "fastq"):
+            n_trimmed += 1
+            # cutadapt --rc appends ' rc' to the description when it flipped the read.
+            strand = "-" if rec.description.endswith(" rc") else "+"
+            if rec.id in reads:
+                n_duplicate_ids += 1
+            # Keep cutadapt sequence orientation as output, store original orientation via strand tag.
+            reads[rec.id] = {"seq": str(rec.seq), "strand": strand}
+
+        if n_duplicate_ids:
+            logger.warning(
+                "[trim_primers] %d reads shared an existing read id and overwrote "
+                "an earlier record; check the BAM for duplicate query names.",
+                n_duplicate_ids,
+            )
+        logger.info(f"Cutadapt trimmed {n_trimmed} reads (input: {n_input})")
         plus_count = sum(1 for v in reads.values() if v["strand"] == "+")
         minus_count = len(reads) - plus_count
         total_count = len(reads)

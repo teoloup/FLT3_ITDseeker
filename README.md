@@ -88,10 +88,36 @@ In `flt3_data/`:
 
 ## Performance Tips
 
-- Use `-t` close to available physical cores.
-- Final validation is the heaviest step; check logs for:
+- **`-t 8` is the practical sweet spot.** The parallel stages scale well on
+  their own (competitive validation measured 42.0s -> 4.7s, about 9x, going
+  from 1 to 20 workers), but they are only 66-86% of single-thread runtime, so
+  Amdahl caps total speedup at roughly 2.6-3.5x. Past 8 workers you buy about
+  5% for 2.5x the cores.
+- The remaining serial cost is dominated by the per-peak MUSCLE consensus and,
+  behind it, the GMM component search.
+- `--msa-max-unique` is the biggest single runtime knob, because MUSCLE is
+  superlinear in panel size. The default of 150 was chosen against the
+  validation set: raising it to 300 roughly triples the MSA stage (on one
+  sample 9.1s -> 26.2s, total 35.6s -> 53.5s) without changing any call.
+- Final validation is the heaviest parallel step; check logs for:
   - read count
   - batch count
   - elapsed time
   - comparisons/sec
+
+## Install
+
+See `requirements.txt`, or use the provided `Dockerfile`:
+
+```bash
+docker build -t nano-itdseeker .
+docker run --rm -v "$PWD":/data nano-itdseeker \
+    -b /data/sample.bam -o /data/out -s SAMPLE -g hg38 -t 8 --html-report
+```
+
+`pymuscle5` has no PyPI release and must be installed from source
+(`pip install git+https://github.com/althonos/pymuscle5`), which needs Cython
+and a C toolchain. `samtools` and `cutadapt` must both resolve on `PATH` --
+installing cutadapt only inside a virtualenv that is not on `PATH` is not
+enough, since the pipeline invokes it as a subprocess by name.
 

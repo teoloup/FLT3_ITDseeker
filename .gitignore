@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Pipeline outputs
+flt3_data/
+temp/
+*.vcf
+*.bam
+*.bai
+*.fastq
+
+# Validation data and run outputs
+test_data/
+test_output/
+*.xlsx

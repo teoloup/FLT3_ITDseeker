@@ -10,6 +10,7 @@ import time
 import pymuscle5
 import textwrap
 from typing import Dict, List, Tuple
+from concurrent.futures import ProcessPoolExecutor
 from Bio.Align import MultipleSeqAlignment
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
@@ -201,6 +202,48 @@ def weighted_consensus_from_msa(
 
     return consensus
 
+def _consensus_for_peak(task):
+    """Panel selection + MSA + weighted consensus for one peak.
+
+    This is lifted verbatim out of build_itd_consensus_sequences so it can be
+    pickled to a process pool. Peaks are independent -- each one reads only its
+    own insertion sequences and writes only its own plot -- so evaluating them
+    concurrently cannot change any individual result. Everything derived from
+    the DataFrame (read counts, median insertion position) stays in the parent,
+    and rows are reassembled in the parent's original peak order, so the output
+    is identical to the serial version rather than merely equivalent.
+    """
+    (alias, seqs, max_unique, min_weight_coverage, base_threshold,
+     min_col_coverage, ambiguous, out_dir, sample_name) = task
+
+    t0 = time.perf_counter()
+    seq_counts = dedup_with_counts(seqs)
+    panel = select_unique_panel(
+        seq_counts,
+        max_unique=max_unique,
+        min_weight_coverage=min_weight_coverage,
+    )
+    msa, weights_by_name = run_muscle5_on_pairs(panel, prefix=alias)
+    consensus = weighted_consensus_from_msa(
+        msa,
+        weights_by_name,
+        base_threshold=base_threshold,
+        min_col_coverage=min_col_coverage,
+        ambiguous=ambiguous,
+        create_plot=True,
+        out_dir=out_dir,
+        sample_name=sample_name,
+        peak_alias=alias,
+    )
+    return {
+        "alias": alias,
+        "consensus": consensus,
+        "n_unique": len(seq_counts),
+        "panel_used": len(panel),
+        "elapsed": time.perf_counter() - t0,
+    }
+
+
 def build_itd_consensus_sequences(
     all_itd_insertions,
     comps,
@@ -211,6 +254,7 @@ def build_itd_consensus_sequences(
     base_threshold=0.7,
     min_col_coverage=0.8,
     ambiguous="N",
+    threads=1,
     out_dir,
 ):
     """
@@ -233,6 +277,9 @@ def build_itd_consensus_sequences(
         Minimum weighted coverage per column to retain in consensus.
     ambiguous : str
         Symbol to use for ambiguous columns (e.g., 'N').
+    threads : int
+        Worker processes for the per-peak MSA. Peaks are independent, so this
+        only changes wall time, never the consensus produced for any peak.
     out_dir : str
         Directory to save results.
 
@@ -241,69 +288,73 @@ def build_itd_consensus_sequences(
     df_cons : pd.DataFrame
         Per-ITD consensus summary.
     """
-    results = []
-
+    # Collect the per-peak work first, keeping the parent's peak order so the
+    # assembled table does not depend on which worker finishes first.
+    tasks, meta = [], []
     for _, row in comps.iterrows():
-        t0 = time.perf_counter()
         alias = row["peak_alias"]
         if alias.upper() == "WT":
             continue
-        mean_len = row["putative_itd_size"]
 
         itd_subset = all_itd_insertions.loc[
             all_itd_insertions["peak_alias"] == alias
         ]
         if itd_subset.empty:
-            print(f"[build_itd_consensus_sequences] No insertions for {alias}")
+            logger.info(f"[build_itd_consensus_sequences] No insertions for {alias}")
             continue
 
-        # --- Deduplicate and select coverage panel ---
         seqs = itd_subset["ins_seq"].dropna().tolist()
-        seq_counts = dedup_with_counts(seqs)
-        panel = select_unique_panel(
-            seq_counts,
-            max_unique=max_unique,
-            min_weight_coverage=min_weight_coverage,
-        )
-        logger.info(
-            f"[build_itd_consensus_sequences] {alias}: total_reads={len(seqs)}, "
-            f"unique={len(seq_counts)}, panel_used={len(panel)}"
-        )
-
-        # --- Run MUSCLE alignment ---
-        msa, weights_by_name = run_muscle5_on_pairs(panel, prefix=alias)
-
-        # --- Weighted consensus ---
-        consensus = weighted_consensus_from_msa(
-            msa,
-            weights_by_name,
-            base_threshold=base_threshold,
-            min_col_coverage=min_col_coverage,
-            ambiguous=ambiguous,
-            create_plot=True,
-            out_dir=out_dir,
-            sample_name=sample_name,
-            peak_alias=alias
-        )
-
-        # Median insertion position for this ITD
-        median_pos = int(itd_subset["ins_pos_ref"].median())
-
-        results.append({
-            "peak_alias": alias,
+        tasks.append((
+            alias, seqs, max_unique, min_weight_coverage, base_threshold,
+            min_col_coverage, ambiguous, out_dir, sample_name,
+        ))
+        meta.append({
+            "alias": alias,
             "n_total_reads": len(seqs),
-            "n_unique": len(seq_counts),
-            "consensus_len": len(consensus),
-            "consensus_seq": consensus,
-            "median_ins_pos_ref": median_pos,
-            "expected_itd_bp": mean_len,
+            # median taken here, on the DataFrame, exactly as before
+            "median_ins_pos_ref": int(itd_subset["ins_pos_ref"].median()),
+            "expected_itd_bp": row["putative_itd_size"],
             "sd_bp": row["sd_bp"],
         })
-        logger.info(
-            f"[build_itd_consensus_sequences] {alias}: consensus_len={len(consensus)}, "
-            f"elapsed={time.perf_counter() - t0:.2f}s"
-        )
 
+    n_workers = max(1, min(int(threads), len(tasks)))
+    t_all = time.perf_counter()
+    if n_workers > 1:
+        logger.info(
+            "[build_itd_consensus_sequences] Building %d peak consensuses across "
+            "%d workers.", len(tasks), n_workers,
+        )
+        with ProcessPoolExecutor(max_workers=n_workers) as ex:
+            # map keeps results in submission order, so the table order is fixed
+            outputs = list(ex.map(_consensus_for_peak, tasks))
+    else:
+        outputs = [_consensus_for_peak(t) for t in tasks]
+
+    results = []
+    for m, o in zip(meta, outputs):
+        logger.info(
+            f"[build_itd_consensus_sequences] {m['alias']}: "
+            f"total_reads={m['n_total_reads']}, unique={o['n_unique']}, "
+            f"panel_used={o['panel_used']}"
+        )
+        results.append({
+            "peak_alias": m["alias"],
+            "n_total_reads": m["n_total_reads"],
+            "n_unique": o["n_unique"],
+            "consensus_len": len(o["consensus"]),
+            "consensus_seq": o["consensus"],
+            "median_ins_pos_ref": m["median_ins_pos_ref"],
+            "expected_itd_bp": m["expected_itd_bp"],
+            "sd_bp": m["sd_bp"],
+        })
+        logger.info(
+            f"[build_itd_consensus_sequences] {m['alias']}: "
+            f"consensus_len={len(o['consensus'])}, elapsed={o['elapsed']:.2f}s"
+        )
+    logger.info(
+        "[build_itd_consensus_sequences] All peak consensuses built in %.2fs.",
+        time.perf_counter() - t_all,
+    )
     # --- Save summary ---
     df_cons = pd.DataFrame(results)
     consensus_name = f"{sample_name}_itd_consensus_seq.tsv"
