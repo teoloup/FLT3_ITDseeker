@@ -1,0 +1,5 @@
+dataset	method	trigger_needed	itds_called	af_major	af_minor	residual_max_minor_fraction
+simC (truth 0.3167/0.0762)	gmm2pass	yes, on minority support	2	0.31967	0.07526	0.028
+simC (truth 0.3167/0.0762)	gmm2pass+dada2	no	2	0.31967	0.07526	0.028
+13697 (3 real ITDs)	gmm2pass	no	3	-	-	0.093
+13697 (3 real ITDs)	gmm2pass+dada2	no	3	-	-	0.093

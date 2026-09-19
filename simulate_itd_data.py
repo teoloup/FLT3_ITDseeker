@@ -130,6 +130,24 @@ SCENARIOS: Dict[str, List[Haplotype]] = {
         Haplotype("ITD_D", af=0.05, ins_pos=180, dup_len=45,
                   divergent=(5, 20, 35)),
     ],
+    # C -- unbalanced same-length pair. Two ITDs identical in length at
+    # different breakpoints, in one peak, at roughly 80/20 within that peak.
+    # The question this answers: the consensus caller emits N only when the
+    # majority base falls below --msa-base-threshold (0.7), so a lopsided mix
+    # may produce a clean-looking consensus of the majority haplotype with the
+    # minor one silently absent -- no N, and therefore no rescue trigger.
+    "C": [
+        Haplotype("WT", af=0.60),
+        Haplotype("ITD_MAJOR", af=0.32, ins_pos=180, dup_len=45),
+        Haplotype("ITD_MINOR", af=0.08, ins_pos=120, dup_len=45),
+    ],
+    # D -- the same idea pushed to the edge of the threshold: 70/30 within the
+    # peak, where the majority base sits right at --msa-base-threshold.
+    "D": [
+        Haplotype("WT", af=0.60),
+        Haplotype("ITD_MAJOR", af=0.28, ins_pos=180, dup_len=45),
+        Haplotype("ITD_MINOR", af=0.12, ins_pos=120, dup_len=45),
+    ],
     # B -- sensitivity. A same-length pair down at the AF where the real
     # validation set still has fragment-analysis-confirmed ITDs (0.012).
     "B": [

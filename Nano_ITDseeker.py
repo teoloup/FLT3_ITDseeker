@@ -96,12 +96,15 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--haplotype-method", type=str, default="gmm2pass",
-        choices=sorted(BACKENDS),
         help=(
             "How to split each GMM length peak into haplotypes. 'gmm2pass' is the "
             "length-based second pass (default, previous behaviour); 'isonclust' "
             "clusters each peak's reads by sequence, which can separate two ITDs "
-            "of the same length; 'none' keeps the first-pass peaks (default: gmm2pass)."
+            "of the same length; 'none' keeps the first-pass peaks. Methods chain "
+            "with '+', as in 'gmm2pass+dada2': split by length first, then cluster "
+            "each resulting peak by sequence. That combination needs no trigger, so "
+            "it also catches unbalanced mixtures the consensus cannot flag. "
+            f"Available: {', '.join(sorted(BACKENDS))} (default: gmm2pass)."
         ),
     )
     parser.add_argument(
@@ -138,6 +141,16 @@ if __name__ == "__main__":
             "Fraction of a consensus that must be N to trigger the rescue. Real "
             "samples with well-separated ITDs produced 0%% N; a simulated peak mixing "
             "three same-length ITDs produced 47%% (default: 0.05)."
+        ),
+    )
+    parser.add_argument(
+        "--rescue-minor-fraction", type=float, default=0.15,
+        help=(
+            "Fraction of a consensus column that may disagree with the called base "
+            "before the rescue fires. This catches unbalanced mixtures that emit no "
+            "N at all: at 80/20 the majority base still clears --msa-base-threshold, "
+            "so the minor ITD vanishes silently. Measured: clean real peaks reach "
+            "0.10, an 80/20 mixture reaches 0.22 (default: 0.15)."
         ),
     )
     parser.add_argument(
@@ -289,6 +302,7 @@ if __name__ == "__main__":
     rescue_mixed_consensus = args.rescue_mixed_consensus
     rescue_method = args.rescue_method
     rescue_n_fraction = args.rescue_n_fraction
+    rescue_minor_fraction = args.rescue_minor_fraction
     isonclust_k = args.isonclust_k
     isonclust_w = args.isonclust_w
     isonclust_aligned_threshold = args.isonclust_aligned_threshold
@@ -596,17 +610,32 @@ if __name__ == "__main__":
         return ins_df, cons
 
     def consensus_n_stats(cons):
-        """Total Ns, and the worst per-peak N fraction, across ITD consensuses."""
+        """Ambiguity summary for a consensus table.
+
+        Returns (total Ns, worst per-peak N fraction, worst per-peak minority
+        fraction). The third is what catches an unbalanced mixture: an N is
+        emitted only once the top base falls under --msa-base-threshold (0.7), so
+        two haplotypes at 80/20 give a clean consensus of the majority, no N
+        anywhere, and the minor ITD silently absorbed. Measured on simulated
+        data that case shows 0 Ns with a minority fraction of 0.22, while every
+        clean peak in the real validation set stays at or below 0.10.
+        """
         if cons is None or cons.empty:
-            return 0, 0.0
+            return 0, 0.0, 0.0
         total = 0
         worst = 0.0
-        for seq in cons["consensus_seq"].fillna(""):
+        worst_minor = 0.0
+        for _, row in cons.iterrows():
+            seq = row.get("consensus_seq") or ""
             n = seq.count("N")
             total += n
             if seq:
                 worst = max(worst, n / len(seq))
-        return total, worst
+            try:
+                worst_minor = max(worst_minor, float(row.get("max_minor_fraction", 0.0)))
+            except (TypeError, ValueError):
+                pass
+        return total, worst, worst_minor
 
     # what actually produced the reported result, for the log and the report
     applied_method = effective_method
@@ -624,17 +653,23 @@ if __name__ == "__main__":
     # method and the result kept ONLY if it actually reduces the Ns. That makes
     # the rescue unable to make things worse by the measure that triggered it,
     # and it costs nothing on samples that show no mixing.
-    n_total, n_worst = consensus_n_stats(df_cons)
-    if n_total:
-        logger.info(
-            "Consensus ambiguity: %d N%s total, worst peak %.1f%% N.",
-            n_total, "" if n_total == 1 else "s", 100 * n_worst,
+    n_total, n_worst, minor_worst = consensus_n_stats(df_cons)
+    logger.info(
+        "Consensus ambiguity: %d N%s total, worst peak %.1f%% N, worst minority "
+        "support %.1f%%.",
+        n_total, "" if n_total == 1 else "s", 100 * n_worst, 100 * minor_worst,
+    )
+    triggered = n_worst > rescue_n_fraction or minor_worst > rescue_minor_fraction
+    if rescue_mixed_consensus and effective_method != rescue_method and triggered:
+        reason = (
+            f"{100 * n_worst:.1f}% N (threshold {100 * rescue_n_fraction:.1f}%)"
+            if n_worst > rescue_n_fraction else
+            f"{100 * minor_worst:.1f}% of a column disagreeing with the called base "
+            f"(threshold {100 * rescue_minor_fraction:.1f}%), with no N to show for it"
         )
-    if rescue_mixed_consensus and effective_method != rescue_method and n_worst > rescue_n_fraction:
         logger.warning(
-            "A consensus is %.1f%% N (threshold %.1f%%), which is what two ITDs of "
-            "the same length in one peak look like. Re-splitting with '%s'.",
-            100 * n_worst, 100 * rescue_n_fraction, rescue_method,
+            "A consensus shows %s, which is what two ITDs of the same length in one "
+            "peak look like. Re-splitting with '%s'.", reason, rescue_method,
         )
         try:
             alt_comps, alt_reads_df, alt_subsets = split_with(
@@ -642,7 +677,7 @@ if __name__ == "__main__":
                 work_tag="_rescue",
             )
             alt_ins, alt_cons = insertions_and_consensus(alt_comps, alt_reads_df, alt_subsets)
-            alt_total, alt_worst = consensus_n_stats(alt_cons)
+            alt_total, alt_worst, alt_minor = consensus_n_stats(alt_cons)
         except Exception as exc:
             # The rescue is an optional extra; a missing R installation or a tool
             # failure must not lose the perfectly good primary result.
@@ -652,11 +687,20 @@ if __name__ == "__main__":
             )
             alt_ins = None
             alt_total = None
+            alt_minor = None
 
-        if alt_ins is not None and alt_total < n_total:
+        # Accept on either axis: fewer ambiguous bases, or less disagreement
+        # inside the columns. An unbalanced mixture has no Ns to reduce, so
+        # comparing N counts alone would reject the very split that fixed it.
+        improved = alt_ins is not None and (
+            alt_total < n_total or alt_minor < minor_worst - 0.02
+        )
+        if improved:
             logger.warning(
-                "Rescue accepted: '%s' cut consensus Ns from %d to %d across %d peaks.",
-                rescue_method, n_total, alt_total, len(alt_cons),
+                "Rescue accepted: '%s' across %d peaks -- ambiguous bases %d -> %d, "
+                "worst column disagreement %.1f%% -> %.1f%%.",
+                rescue_method, len(alt_cons), n_total, alt_total,
+                100 * minor_worst, 100 * alt_minor,
             )
             comps, reads_df, peak_subsets = alt_comps, alt_reads_df, alt_subsets
             insertions_df, df_cons = alt_ins, alt_cons

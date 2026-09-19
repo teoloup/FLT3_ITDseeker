@@ -1,0 +1,10 @@
+dataset	peak	within_peak_split	consensus_Ns	max_minor_fraction	N_trigger_fires	minor_trigger_fires	itds_recovered	note
+10808	ITD_1	single haplotype	0	0.0241	no	no	1/1	clean real
+13697	ITD_1_S1	single haplotype	0	0.0602	no	no	3/3	clean real
+13697	ITD_2	single haplotype	0	0.0262	no	no	3/3	clean real
+13697	ITD_1_S2	single haplotype	0	0.0932	no	no	3/3	clean real
+14219	ITD_2	single haplotype	0	0.0775	no	no	2/2	clean real
+14219	ITD_1	single haplotype	0	0.1009	no	no	2/2	clean real; highest clean value seen
+simC	ITD_1	80/20	0	0.2167	NO	yes	1/2 -> 2/2	N trigger blind; minor trigger catches it
+simD	ITD_1	70/30	3	0.3623	yes	yes	2/2	both triggers fire
+simA	ITD_2	3-way same length	17	0.3835	yes	yes	1/4 -> 3/4	both triggers fire

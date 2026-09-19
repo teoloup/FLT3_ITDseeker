@@ -124,12 +124,16 @@ def weighted_consensus_from_msa(
 
     Returns
     -------
-    consensus : str
-        Weighted consensus sequence (no gaps).
+    (consensus, max_minor_fraction) : tuple[str, float]
+        The weighted consensus (no gaps), paired with the largest per-column
+        fraction of weighted support that disagreed with the called base. That
+        second value is what reveals an unbalanced mixture: an N appears only
+        once the top base falls under `base_threshold`, so two haplotypes at
+        80/20 give a clean consensus, no N, and max_minor_fraction near 0.2.
     """
 
     if len(msa) == 0:
-        return ""
+        return "", 0.0
 
     # --- Prepare alignment matrix ---
     names = [rec.id for rec in msa]
@@ -151,6 +155,7 @@ def weighted_consensus_from_msa(
 
     # --- Weighted consensus computation ---
     consensus_chars = []
+    minor_fractions = []
     for j in kept_positions:
         col = A[:, j]
         mask_col = (col != "-")
@@ -161,9 +166,16 @@ def weighted_consensus_from_msa(
             base_weights[b] = base_weights.get(b, 0.0) + w
         top_base, top_w = max(base_weights.items(), key=lambda kv: kv[1])
         frac = top_w / sum(base_weights.values())
+        # How much of this column disagrees with the base about to be called.
+        # An N only appears once the top base drops below base_threshold, so a
+        # lopsided mixture of two haplotypes -- 80/20, say -- yields a clean
+        # consensus of the majority and no N at all. Tracking the disagreement
+        # itself is what keeps that case visible.
+        minor_fractions.append(1.0 - frac)
         consensus_chars.append(top_base if frac >= base_threshold else ambiguous)
 
     consensus = "".join(consensus_chars).replace("-", "")
+    max_minor = max(minor_fractions) if minor_fractions else 0.0
 
     # --- Optional per-peak plot ---
     if create_plot:
@@ -200,7 +212,7 @@ def weighted_consensus_from_msa(
         plt.close(fig)
         logger.info("[weighted_consensus_from_msa] Saved: %s", os.path.abspath(out_path))
 
-    return consensus
+    return consensus, max_minor
 
 def _consensus_for_peak(task):
     """Panel selection + MSA + weighted consensus for one peak.
@@ -224,7 +236,7 @@ def _consensus_for_peak(task):
         min_weight_coverage=min_weight_coverage,
     )
     msa, weights_by_name = run_muscle5_on_pairs(panel, prefix=alias)
-    consensus = weighted_consensus_from_msa(
+    consensus, max_minor = weighted_consensus_from_msa(
         msa,
         weights_by_name,
         base_threshold=base_threshold,
@@ -240,6 +252,7 @@ def _consensus_for_peak(task):
         "consensus": consensus,
         "n_unique": len(seq_counts),
         "panel_used": len(panel),
+        "max_minor_fraction": max_minor,
         "elapsed": time.perf_counter() - t0,
     }
 
@@ -343,6 +356,7 @@ def build_itd_consensus_sequences(
             "n_unique": o["n_unique"],
             "consensus_len": len(o["consensus"]),
             "consensus_seq": o["consensus"],
+            "max_minor_fraction": round(float(o["max_minor_fraction"]), 4),
             "median_ins_pos_ref": m["median_ins_pos_ref"],
             "expected_itd_bp": m["expected_itd_bp"],
             "sd_bp": m["sd_bp"],

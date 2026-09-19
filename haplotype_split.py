@@ -614,9 +614,40 @@ def split_peaks(
     tool_kwargs: Optional[dict] = None,
 ) -> PeakRefineResult:
     """Split GMM peaks into haplotypes using the named method."""
+    # Methods compose: "gmm2pass+dada2" splits by length first, then clusters
+    # each resulting peak by sequence. That order is the useful one -- length is
+    # cheap and reliable and separates the ITDs that differ in size, leaving the
+    # sequence clusterer only the peaks where length has nothing left to say. It
+    # also removes the dependence on a trigger: chaining looks inside every peak
+    # whether or not the consensus flagged anything.
+    if "+" in method:
+        stages = [m.strip() for m in method.split("+") if m.strip()]
+        result = PeakRefineResult(comps=comps, reads_df=reads_df,
+                                  peak_subsets=peak_subsets)
+        for n, stage in enumerate(stages, start=1):
+            logger.info("[haplotype_split] chained stage %d/%d: %s",
+                        n, len(stages), stage)
+            result = split_peaks(
+                stage,
+                comps=result.comps,
+                reads_df=result.reads_df,
+                peak_subsets=result.peak_subsets,
+                wt_amplicon_length=wt_amplicon_length,
+                threads=threads,
+                work_dir=(os.path.join(work_dir, f"stage{n}_{stage}")
+                          if work_dir else None),
+                cluster_wt_peak=cluster_wt_peak,
+                min_child_fraction=min_child_fraction,
+                min_child_reads=min_child_reads,
+                gmm_kwargs=gmm_kwargs,
+                tool_kwargs=tool_kwargs,
+            )
+        return result
+
     if method not in BACKENDS:
         raise ValueError(
-            f"Unknown haplotype method {method!r}; available: {sorted(BACKENDS)}"
+            f"Unknown haplotype method {method!r}; available: {sorted(BACKENDS)} "
+            f"(or several joined with '+', e.g. gmm2pass+dada2)"
         )
     if comps.empty or reads_df.empty:
         return PeakRefineResult(comps=comps, reads_df=reads_df, peak_subsets=peak_subsets)
