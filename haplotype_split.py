@@ -21,7 +21,7 @@ import os
 import shutil
 import subprocess
 import tempfile
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -345,10 +345,256 @@ def _backend_isonclust(**kw) -> PeakRefineResult:
     )
 
 
+def _backend_dada2(**kw) -> PeakRefineResult:
+    """Denoise each peak's reads into ASVs with DADA2, via an Rscript wrapper.
+
+    DADA2 is R-only, so this shells out to dada2_cluster.R next to this module.
+    Its error model is substitution-oriented; the wrapper uses the settings
+    DADA2 documents for long indel-prone reads (PacBio CCS), which is the
+    closest supported regime to ONT.
+    """
+    # Bioconductor lags new R releases, so the system Rscript is often too new
+    # for dada2. ITDSEEKER_RSCRIPT points at an interpreter that has it (for
+    # example a bioconda env, which pins a compatible R alongside the package).
+    rscript = os.environ.get("ITDSEEKER_RSCRIPT") or _require_tool("Rscript", "dada2")
+    if not os.path.exists(rscript):
+        raise RuntimeError(
+            f"ITDSEEKER_RSCRIPT points at {rscript}, which does not exist."
+        )
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "dada2_cluster.R")
+    if not os.path.exists(script):
+        raise RuntimeError(f"dada2 backend needs {script}, which is missing.")
+
+    comps, reads_df = kw["comps"], kw["reads_df"]
+    peak_subsets = kw["peak_subsets"]
+    opts = kw.get("tool_kwargs") or {}
+    omega_a = opts.get("dada2_omega_a", 1e-40)
+    band_size = int(opts.get("dada2_band_size", 32))
+    hp_penalty = opts.get("dada2_homopolymer_gap_penalty", -1)
+    work_dir = kw["work_dir"]
+
+    assignments: Dict[str, Dict[str, str]] = {}
+    for alias in _target_peaks(comps, kw.get("cluster_wt_peak", False)):
+        read_ids = peak_subsets.get(alias, [])
+        if len(read_ids) < kw["min_child_reads"] * 2:
+            continue
+
+        peak_dir = os.path.join(work_dir, f"dada2_{alias}")
+        os.makedirs(peak_dir, exist_ok=True)
+        fq = os.path.join(peak_dir, "reads.fastq")
+        n = write_peak_fastq(reads_df, read_ids, fq)
+        tsv = os.path.join(peak_dir, "clusters.tsv")
+        fa = os.path.join(peak_dir, "asvs.fasta")
+        logger.info(
+            "[haplotype_split] DADA2 on %s (%d reads, OMEGA_A=%g band=%d hp_gap=%s)",
+            alias, n, omega_a, band_size, hp_penalty,
+        )
+
+        cmd = [rscript, script, fq, tsv, fa, str(omega_a), str(band_size),
+               str(hp_penalty), str(kw["min_child_reads"])]
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if res.returncode != 0:
+            raise RuntimeError(
+                f"dada2_cluster.R failed on peak {alias}: {res.stderr.decode()[-2000:]}"
+            )
+        for line in res.stderr.decode().splitlines():
+            if "[dada2_cluster]" in line:
+                logger.info("  %s", line.strip())
+        if not os.path.exists(tsv):
+            raise RuntimeError(f"dada2_cluster.R produced no cluster table for {alias}")
+
+        mapping: Dict[str, str] = {}
+        with open(tsv) as fh:
+            for line in fh:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) >= 2:
+                    mapping[parts[1]] = parts[0]
+        assignments[alias] = mapping
+
+    return assignments_to_result(
+        comps=comps, reads_df=reads_df, peak_subsets=peak_subsets,
+        assignments=assignments,
+        wt_amplicon_length=kw["wt_amplicon_length"],
+        min_child_fraction=kw["min_child_fraction"],
+        min_child_reads=kw["min_child_reads"],
+    )
+
+
+def _pad_reads_to_equal_length(reads_df: pd.DataFrame, read_ids: List[str],
+                               path: str, length_pct: float = 5.0
+                               ) -> Tuple[int, int, int]:
+    """Write a FASTQ with every read the same length, for AmpliCI.
+
+    AmpliCI requires equal-length reads with no ambiguous bases. Reads are
+    trimmed from the left (which keeps the amplicon start, and therefore the
+    insertion, in frame) and anything shorter than the target is dropped rather
+    than padded -- padding would invent bases the error model would then try to
+    explain.
+
+    The target is a low percentile of the peak's length distribution rather than
+    the mode: trimming to the mode discarded roughly half the reads on real
+    data, because ONT deletion errors put a long tail below it. `length_pct`
+    trades a few trimmed bases for keeping almost every read.
+
+    Returns (written, dropped_short, dropped_ambiguous).
+    """
+    subset = reads_df.loc[reads_df["read_id"].isin(read_ids)]
+    lengths = [len(s) for s in subset["read_seq"] if s]
+    if not lengths:
+        return 0, 0, 0
+    target_len = int(np.percentile(lengths, length_pct))
+
+    written = short = ambig = 0
+    with open(path, "w", newline="\n") as fh:
+        for row in subset.itertuples(index=False):
+            seq = row.read_seq or ""
+            if len(seq) < target_len:
+                short += 1
+                continue
+            seq = seq[:target_len]
+            if set(seq) - set("ACGT"):
+                ambig += 1
+                continue
+            qual = (getattr(row, "read_qual", "") or "")[:target_len]
+            if len(qual) != target_len:
+                qual = "I" * target_len
+            fh.write(f"@{row.read_id}\n{seq}\n+\n{qual}\n")
+            written += 1
+    return written, short, ambig
+
+
+def _backend_amplici(**kw) -> PeakRefineResult:
+    """Denoise each peak's reads into haplotypes with AmpliCI.
+
+    AmpliCI models substitution *and* indel errors and estimates them from the
+    sample, which is the closest fit of the three tools to what ONT data needs
+    and to the case of two near-identical haplotypes. Its constraints are the
+    awkward part: equal-length reads, no ambiguous bases, and an indel rate
+    parameter whose default (6e-5) is an Illumina figure. The measured ONT indel
+    rate on this data is ~0.7%, so the default here is raised to match; leaving
+    it at the Illumina value makes AmpliCI read every ONT indel as a distinct
+    haplotype.
+    """
+    binary = _require_tool("run_AmpliCI", "amplici")
+    comps, reads_df = kw["comps"], kw["reads_df"]
+    peak_subsets = kw["peak_subsets"]
+    opts = kw.get("tool_kwargs") or {}
+    indel_rate = float(opts.get("amplici_indel_rate", 0.007))
+    abundance = float(opts.get("amplici_abundance", 2.0))
+    # AmpliCI refuses to assign a read whose log-likelihood under the winning
+    # haplotype is below --log_likelihood, default -100. That is an Illumina
+    # figure: on ONT reads the per-read log-likelihoods run to -2000 and below,
+    # so the default left 85% of reads unassigned (NA) in testing, which would
+    # gut the allele-frequency denominator.
+    log_likelihood = float(opts.get("amplici_log_likelihood", -100000.0))
+    length_pct = float(opts.get("amplici_length_percentile", 5.0))
+    work_dir = kw["work_dir"]
+
+    assignments: Dict[str, Dict[str, str]] = {}
+    for alias in _target_peaks(comps, kw.get("cluster_wt_peak", False)):
+        read_ids = peak_subsets.get(alias, [])
+        if len(read_ids) < kw["min_child_reads"] * 2:
+            continue
+
+        peak_dir = os.path.join(work_dir, f"amplici_{alias}")
+        os.makedirs(peak_dir, exist_ok=True)
+        fq = os.path.join(peak_dir, "reads.fastq")
+        n, n_short, n_ambig = _pad_reads_to_equal_length(
+            reads_df, read_ids, fq, length_pct=length_pct
+        )
+        if n < kw["min_child_reads"] * 2:
+            logger.info(
+                "[haplotype_split] AmpliCI skipping %s: only %d of %d reads survived "
+                "the equal-length requirement.", alias, n, len(read_ids),
+            )
+            continue
+        logger.info(
+            "[haplotype_split] AmpliCI on %s (%d reads kept, %d too short, %d "
+            "ambiguous; indel_rate=%g abundance=%g ll_floor=%g)",
+            alias, n, n_short, n_ambig, indel_rate, abundance, log_likelihood,
+        )
+
+        base = os.path.join(peak_dir, "out")
+        cmd = [binary, "--fastq", fq, "--outfile", base,
+               "--abundance", str(abundance), "--indel", str(indel_rate),
+               "--log_likelihood", str(log_likelihood)]
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # AmpliCI returns a non-zero exit code even on a successful run and logs
+        # everything, including ordinary progress, to stderr at INFO level. The
+        # only reliable success signal is that it wrote its result file.
+        out_file = base + ".out" if os.path.exists(base + ".out") else base
+        if not os.path.exists(out_file):
+            raise RuntimeError(
+                f"run_AmpliCI produced no result file for peak {alias} "
+                f"(exit {res.returncode}): {res.stderr.decode()[-2000:]}"
+            )
+
+        mapping = _parse_amplici_assignments(base, fq)
+        if mapping:
+            assignments[alias] = mapping
+        else:
+            logger.warning(
+                "[haplotype_split] AmpliCI produced no read assignments for %s", alias
+            )
+
+    return assignments_to_result(
+        comps=comps, reads_df=reads_df, peak_subsets=peak_subsets,
+        assignments=assignments,
+        wt_amplicon_length=kw["wt_amplicon_length"],
+        min_child_fraction=kw["min_child_fraction"],
+        min_child_reads=kw["min_child_reads"],
+    )
+
+
+def _parse_amplici_assignments(base: str, fastq_path: str) -> Dict[str, str]:
+    """Read AmpliCI's per-read haplotype assignments out of its .out file.
+
+    The file is a key/value text report; the assignment vector is one integer
+    per input read, in input order, under a header naming it. Read ids come back
+    from the FASTQ because AmpliCI reports positions, not names.
+    """
+    out_file = base if os.path.exists(base) else base + ".out"
+    if not os.path.exists(out_file):
+        return {}
+
+    ids: List[str] = []
+    with open(fastq_path) as fh:
+        for i, line in enumerate(fh):
+            if i % 4 == 0:
+                ids.append(line[1:].strip().split()[0])
+
+    text = open(out_file).read()
+    values: List[str] = []
+    capture = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        low = stripped.lower()
+        if low.startswith("assignments:") or low.startswith("cluster assignments:"):
+            capture = True
+            rest = stripped.split(":", 1)[1].strip()
+            if rest:
+                values.extend(rest.split())
+            continue
+        if capture:
+            if not stripped or ":" in stripped:
+                break
+            values.extend(stripped.split())
+
+    if len(values) < len(ids):
+        return {}
+    return {
+        rid: f"H{val}" for rid, val in zip(ids, values[:len(ids)])
+        if val.lstrip("-").isdigit() and int(val) >= 0
+    }
+
+
 BACKENDS: Dict[str, Callable[..., PeakRefineResult]] = {
     "none": _backend_none,
     "gmm2pass": _backend_gmm2pass,
     "isonclust": _backend_isonclust,
+    "dada2": _backend_dada2,
+    "amplici": _backend_amplici,
 }
 
 

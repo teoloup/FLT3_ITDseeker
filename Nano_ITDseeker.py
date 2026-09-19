@@ -135,6 +135,47 @@ if __name__ == "__main__":
         help="isONclust minimum mapped fraction of a read (tool default 0.7) (default: 0.90).",
     )
     parser.add_argument(
+        "--dada2-omega-a", type=float, default=1e-40,
+        help="DADA2 OMEGA_A: p-value threshold for splitting off a new ASV. Lower is more conservative (default: 1e-40).",
+    )
+    parser.add_argument(
+        "--dada2-band-size", type=int, default=32,
+        help="DADA2 BAND_SIZE. 32 is the value DADA2 documents for long indel-prone reads (default: 32).",
+    )
+    parser.add_argument(
+        "--dada2-homopolymer-gap-penalty", type=float, default=-1.0,
+        help="DADA2 HOMOPOLYMER_GAP_PENALTY, softening gaps where ONT errors concentrate (default: -1.0).",
+    )
+    parser.add_argument(
+        "--amplici-indel-rate", type=float, default=0.007,
+        help=(
+            "AmpliCI indel error rate. Its own default of 6e-5 is an Illumina figure; "
+            "the rate measured on this data's ONT negative control is ~0.7%%, and "
+            "leaving it at the Illumina value makes AmpliCI read every ONT indel as a "
+            "distinct haplotype (default: 0.007)."
+        ),
+    )
+    parser.add_argument(
+        "--amplici-abundance", type=float, default=2.0,
+        help="AmpliCI minimum scaled abundance for a haplotype (default: 2.0).",
+    )
+    parser.add_argument(
+        "--amplici-log-likelihood", type=float, default=-100000.0,
+        help=(
+            "AmpliCI per-read log-likelihood floor for assigning a read to a haplotype. "
+            "Its own default of -100 is an Illumina figure and left 85%% of ONT reads "
+            "unassigned in testing (default: -100000)."
+        ),
+    )
+    parser.add_argument(
+        "--amplici-length-percentile", type=float, default=5.0,
+        help=(
+            "Percentile of the peak's read-length distribution to trim to for AmpliCI, "
+            "which requires equal-length reads. Trimming to the mode discarded about "
+            "half the reads (default: 5.0)."
+        ),
+    )
+    parser.add_argument(
         "--min-reads-for-subpeak-refinement", type=int, default=150, help="Minimum reads in a parent peak to attempt one-level subpeak refinement (default: 150)."
     )
     parser.add_argument(
@@ -417,6 +458,13 @@ if __name__ == "__main__":
                 w=isonclust_w,
                 aligned_threshold=isonclust_aligned_threshold,
                 mapped_threshold=isonclust_mapped_threshold,
+                dada2_omega_a=args.dada2_omega_a,
+                dada2_band_size=args.dada2_band_size,
+                dada2_homopolymer_gap_penalty=args.dada2_homopolymer_gap_penalty,
+                amplici_indel_rate=args.amplici_indel_rate,
+                amplici_abundance=args.amplici_abundance,
+                amplici_log_likelihood=args.amplici_log_likelihood,
+                amplici_length_percentile=args.amplici_length_percentile,
             ),
         )
         comps = refine_result.comps
