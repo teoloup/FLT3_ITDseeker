@@ -17,13 +17,8 @@ from Bio.SeqRecord import SeqRecord
 from scipy.stats import fisher_exact
 logger = logging.getLogger(__name__)
 
-# Biopython 1.85 renamed the gap-score attributes and warns on every use of the
-# old names. An aligner is built per worker per chunk, so that is thousands of
-# BiopythonDeprecationWarning lines through a run, drowning the progress output.
-# The old names are also slated for removal, so this is not only cosmetic.
-#
-# Setting whichever name the installed version provides keeps the pipeline quiet
-# on new Biopython and working on the versions requirements.txt still allows.
+# Biopython 1.85 renamed these and warns on every use of the old names; an
+# aligner is built per worker per chunk, so that floods the log.
 _GAP_SCORE_NAMES = {
     "target_open_gap_score": "open_insertion_score",
     "target_extend_gap_score": "extend_insertion_score",
@@ -34,11 +29,8 @@ _GAP_SCORE_NAMES = {
 }
 
 
-# Probed on the class, not an instance. Several of these are aggregate
-# properties whose getter raises ValueError("gap scores are different") once the
-# underlying values diverge, so hasattr() on a part-configured aligner blows up
-# rather than answering the question. The class attribute is the property object
-# itself and is always safe to look at.
+# Probed on the class: these getters raise ValueError once the underlying
+# values diverge, so hasattr() on a configured instance would blow up.
 _HAS_MODERN_GAP_NAMES = hasattr(Align.PairwiseAligner, "open_insertion_score")
 
 
@@ -67,25 +59,11 @@ def build_default_aligner() -> Align.PairwiseAligner:
     return aligner
 
 def insertions_from_aligned_blocks(aln_blocks):
-    """Detect insertions (in query) as large jumps between aligned blocks.
+    """Insertions in query relative to target, as (target_end, query_end, length).
 
-    Blocks returned by Bio.Align are gapless by construction: inside a single
-    block the target and query spans are always the same length. All indel
-    evidence therefore lives in the jumps *between* consecutive blocks, never
-    inside one -- so any check that subtracts the two spans within a block is
-    identically zero and silently passes everything.
-
-    Parameters
-    ----------
-    aln_blocks : array-like or None
-        An ``Alignment.aligned`` value, shape (2, n_blocks, 2), or an empty
-        sequence when no alignment was produced.
-
-    Returns
-    -------
-    list[tuple[int, int, int]]
-        (target_end, query_end, insertion_length) for every inter-block gap
-        where the query advanced further than the target.
+    Blocks from Bio.Align are gapless, so target and query spans within a block
+    are always equal: all indel evidence lives in the jumps between blocks.
+    Takes an ``Alignment.aligned`` value, or an empty sequence if none.
     """
     if aln_blocks is None or len(aln_blocks) != 2:
         return []
@@ -132,9 +110,6 @@ def percent_identity(aln):
     return ident / total if total else 0.0
 
 def find_insertions(aln):
-    # Insertions only ever appear between aligned blocks (see
-    # insertions_from_aligned_blocks); there is no within-block case to fall
-    # back to.
     return find_insertions_between_blocks(aln)
 
 def _seq_in_reference_orientation(read_seq: str, read_strand: str) -> str:
@@ -177,16 +152,9 @@ def process_chunk(chunk, itd_min, itd_max, ref_seq, peak_alias):
 def span_identity(aln):
     """Identity over the full span, counting unaligned bases against the score.
 
-    `percent_identity` divides matches by the summed length of aligned blocks,
-    so bases the aligner declined to align are invisible to it. That makes it
-    useless for *choosing between* references: a perfect, error-free ITD read
-    scores 1.0 against its own reference, against a shorter reference nested
-    inside it, and against plain WT. Dividing by the full sequence length makes
-    the skipped bases count, which is what reference discrimination needs.
-
-    `percent_identity` is still the right measure for the read-quality filter,
-    where the question is how good the read is rather than which reference it
-    belongs to.
+    Unlike `percent_identity`, which divides by aligned-block length and so reads
+    1.0 for a clean read against *any* reference, this can discriminate between
+    references. `percent_identity` remains the right read-quality measure.
     """
     if aln is None:
         return 0.0
@@ -204,16 +172,10 @@ def span_identity(aln):
 def compute_adjusted_score(aln, alpha=2.0, pid=None):
     """Score how well a read fits one reference, for competitive assignment.
 
-    ``alpha`` weights unexplained insertions. It used to be 1.0, which made a
-    15 bp structural insertion cost only 15/366 = 0.04 -- far less than the
-    noise from ordinary sequencing error, so reads routinely preferred a wrong
-    reference whose insertion was nested inside the right one. Measured against
-    simulated data with known haplotypes, correct-reference assignment runs at
-    72% with alpha=1 and 94% with alpha=2-3; the value is deliberately well
-    inside that plateau.
-
-    ``pid`` is the span identity for this alignment; pass it when it has already
-    been computed, since recomputing doubles the cost of the validation pass.
+    ``alpha`` weights unexplained insertions. At 1.0 a 15bp structural insertion
+    cost only 0.04, below sequencing-error noise, and reads preferred wrong
+    references; correct assignment measured 72% at alpha=1 against 94% at 2-3.
+    ``pid`` is the span identity, passed in to avoid recomputing it.
     """
     if aln is None:
         return 0.0
@@ -1071,29 +1033,18 @@ def plot_itd_read_pileup(
     max_reads=80,
     dpi=150,
 ):
-    """Draw an IGV-style pileup of the reads supporting one ITD.
+    """IGV-style pileup of the reads supporting one ITD.
 
-    One row per read, spanning the amplicon, with the inserted bases drawn as a
-    block at the position the aligner placed them and coloured by the strand the
-    read was sequenced on. This is built from the per-read insertion evidence in
-    `insertions_df`, not from a re-alignment, so what it shows is exactly what
-    the call was made from.
-
-    What to look for:
-      * a clean vertical edge means every read puts the insertion in the same
-        place, which is what a real ITD looks like
-      * blocks of two different widths stacked together mean two ITDs of
-        different size share this peak
-      * all one colour means the ITD was seen on a single strand, which the
-        Fisher test in the report quantifies
+    One row per read, inserted bases drawn where the aligner placed them and
+    coloured by strand. A clean vertical edge means every read agrees on the
+    position; two block widths mean two ITD sizes share the peak.
     """
     subset = insertions_df.loc[insertions_df["peak_alias"] == peak_alias]
     if subset.empty:
         return None
 
     n_total = len(subset)
-    # Sort by insertion position then length so disagreement shows as a ragged
-    # edge rather than being scattered through the stack.
+    # sorted so disagreement shows as a ragged edge rather than scattered
     subset = subset.sort_values(["ins_pos_ref", "ins_len", "read_id"])
     if n_total > max_reads:
         step = n_total / max_reads
@@ -1106,7 +1057,6 @@ def plot_itd_read_pileup(
 
     colour = {"+": "#4a7fb5", "-": "#d8626f"}
     for row_i, (_, r) in enumerate(subset.iterrows()):
-        # the read body, as aligned to the wild-type reference
         ax.add_patch(mpatches.Rectangle(
             (0, row_i + 0.12), ref_len, 0.76,
             facecolor="#e9edf1", edgecolor="none",

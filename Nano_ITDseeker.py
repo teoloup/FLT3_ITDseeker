@@ -95,63 +95,19 @@ if __name__ == "__main__":
         "--disable-subpeak-refinement", action="store_true", help="Disable one-level local refinement of each initial ITD peak."
     )
     parser.add_argument(
-        "--haplotype-method", type=str, default="gmm2pass",
+        "--haplotype-method", type=str, default="dada2",
         help=(
-            "How to split each GMM length peak into haplotypes. 'gmm2pass' is the "
-            "length-based second pass (default, previous behaviour); 'isonclust' "
-            "clusters each peak's reads by sequence, which can separate two ITDs "
-            "of the same length; 'none' keeps the first-pass peaks. Methods chain "
-            "with '+', as in 'gmm2pass+dada2': split by length first, then cluster "
-            "each resulting peak by sequence. That combination needs no trigger, so "
-            "it also catches unbalanced mixtures the consensus cannot flag. "
-            f"Available: {', '.join(sorted(BACKENDS))} (default: gmm2pass)."
+            "How to split each GMM length peak into haplotypes. 'dada2' clusters "
+            "each peak's reads by sequence and is the default: it separates two ITDs "
+            "of the same length, which no length-based method can. 'gmm2pass' is the "
+            "older length-based split, 'none' keeps the first-pass peaks. Methods "
+            f"chain with '+'. Available: {', '.join(sorted(BACKENDS))} "
+            "(default: dada2)."
         ),
     )
     parser.add_argument(
         "--cluster-wt-peak", action="store_true",
         help="Also run haplotype splitting on the WT peak, to look for ITDs hiding inside it (default: off).",
-    )
-    parser.add_argument(
-        "--rescue-mixed-consensus", dest="rescue_mixed_consensus",
-        action="store_true", default=True,
-        help=(
-            "If an ITD consensus comes back heavily ambiguous -- the signature of two "
-            "ITDs of the same length sharing one length peak -- re-split the sample "
-            "with --rescue-method and keep that result only if it reduces the Ns "
-            "(default: enabled)."
-        ),
-    )
-    parser.add_argument(
-        "--no-rescue-mixed-consensus", dest="rescue_mixed_consensus",
-        action="store_false", help="Disable the mixed-consensus rescue.",
-    )
-    parser.add_argument(
-        "--rescue-method", type=str, default="dada2",
-        choices=sorted(k for k in BACKENDS if k != "none"),
-        help=(
-            "Method used by the mixed-consensus rescue. dada2 is the default because "
-            "it is the only backend that matched the length-based baseline on every "
-            "real validation sample while still separating same-length ITDs in "
-            "simulation (default: dada2)."
-        ),
-    )
-    parser.add_argument(
-        "--rescue-n-fraction", type=float, default=0.05,
-        help=(
-            "Fraction of a consensus that must be N to trigger the rescue. Real "
-            "samples with well-separated ITDs produced 0%% N; a simulated peak mixing "
-            "three same-length ITDs produced 47%% (default: 0.05)."
-        ),
-    )
-    parser.add_argument(
-        "--rescue-minor-fraction", type=float, default=0.15,
-        help=(
-            "Fraction of a consensus column that may disagree with the called base "
-            "before the rescue fires. This catches unbalanced mixtures that emit no "
-            "N at all: at 80/20 the majority base still clears --msa-base-threshold, "
-            "so the minor ITD vanishes silently. Measured: clean real peaks reach "
-            "0.10, an 80/20 mixture reaches 0.22 (default: 0.15)."
-        ),
     )
     parser.add_argument(
         "--min-haplotype-reads", type=int, default=20,
@@ -299,10 +255,6 @@ if __name__ == "__main__":
     haplotype_method = args.haplotype_method
     cluster_wt_peak = args.cluster_wt_peak
     min_haplotype_reads = args.min_haplotype_reads
-    rescue_mixed_consensus = args.rescue_mixed_consensus
-    rescue_method = args.rescue_method
-    rescue_n_fraction = args.rescue_n_fraction
-    rescue_minor_fraction = args.rescue_minor_fraction
     isonclust_k = args.isonclust_k
     isonclust_w = args.isonclust_w
     isonclust_aligned_threshold = args.isonclust_aligned_threshold
@@ -520,10 +472,6 @@ if __name__ == "__main__":
         )
         return result.comps, result.reads_df, result.peak_subsets
 
-    # Keep the first-pass peaks: the mixed-consensus rescue re-splits from here,
-    # not from an already-split state.
-    gmm_comps, gmm_reads_df, gmm_peak_subsets = comps, reads_df, peak_subsets
-
     logger.info(f"Splitting peaks into haplotypes using method: {effective_method}")
     comps, reads_df, peak_subsets = split_with(
         effective_method, comps, reads_df, peak_subsets
@@ -637,95 +585,24 @@ if __name__ == "__main__":
                 pass
         return total, worst, worst_minor
 
-    # what actually produced the reported result, for the log and the report
     applied_method = effective_method
-    rescue_note = None
 
     insertions_df, df_cons = insertions_and_consensus(comps, reads_df, peak_subsets)
     if insertions_df is None:
         finalize_no_itd("No ITD insertions were detected after peak processing.")
 
-    # --- Mixed-consensus rescue ------------------------------------------------
-    # Ns in a consensus mean the reads behind that peak disagree, and the usual
-    # reason is two ITDs of the same length sharing one length peak -- which no
-    # length-based method can separate. Sequence clustering can, so when the
-    # consensus shows that signature the sample is re-split with the rescue
-    # method and the result kept ONLY if it actually reduces the Ns. That makes
-    # the rescue unable to make things worse by the measure that triggered it,
-    # and it costs nothing on samples that show no mixing.
     n_total, n_worst, minor_worst = consensus_n_stats(df_cons)
     logger.info(
         "Consensus ambiguity: %d N%s total, worst peak %.1f%% N, worst minority "
         "support %.1f%%.",
         n_total, "" if n_total == 1 else "s", 100 * n_worst, 100 * minor_worst,
     )
-    triggered = n_worst > rescue_n_fraction or minor_worst > rescue_minor_fraction
-    if rescue_mixed_consensus and effective_method != rescue_method and triggered:
-        reason = (
-            f"{100 * n_worst:.1f}% N (threshold {100 * rescue_n_fraction:.1f}%)"
-            if n_worst > rescue_n_fraction else
-            f"{100 * minor_worst:.1f}% of a column disagreeing with the called base "
-            f"(threshold {100 * rescue_minor_fraction:.1f}%), with no N to show for it"
-        )
+    if minor_worst > 0.15 or n_worst > 0.05:
         logger.warning(
-            "A consensus shows %s, which is what two ITDs of the same length in one "
-            "peak look like. Re-splitting with '%s'.", reason, rescue_method,
+            "A consensus still looks mixed after clustering (%.1f%% N, %.1f%% minority "
+            "support). Treat those calls as provisional.",
+            100 * n_worst, 100 * minor_worst,
         )
-        try:
-            alt_comps, alt_reads_df, alt_subsets = split_with(
-                rescue_method, gmm_comps, gmm_reads_df, gmm_peak_subsets,
-                work_tag="_rescue",
-            )
-            alt_ins, alt_cons = insertions_and_consensus(alt_comps, alt_reads_df, alt_subsets)
-            alt_total, alt_worst, alt_minor = consensus_n_stats(alt_cons)
-        except Exception as exc:
-            # The rescue is an optional extra; a missing R installation or a tool
-            # failure must not lose the perfectly good primary result.
-            logger.warning(
-                "Rescue with '%s' could not run (%s). Keeping the '%s' result.",
-                rescue_method, exc, effective_method,
-            )
-            alt_ins = None
-            alt_total = None
-            alt_minor = None
-
-        # Accept on either axis: fewer ambiguous bases, or less disagreement
-        # inside the columns. An unbalanced mixture has no Ns to reduce, so
-        # comparing N counts alone would reject the very split that fixed it.
-        improved = alt_ins is not None and (
-            alt_total < n_total or alt_minor < minor_worst - 0.02
-        )
-        if improved:
-            logger.warning(
-                "Rescue accepted: '%s' across %d peaks -- ambiguous bases %d -> %d, "
-                "worst column disagreement %.1f%% -> %.1f%%.",
-                rescue_method, len(alt_cons), n_total, alt_total,
-                100 * minor_worst, 100 * alt_minor,
-            )
-            comps, reads_df, peak_subsets = alt_comps, alt_reads_df, alt_subsets
-            insertions_df, df_cons = alt_ins, alt_cons
-            applied_method = rescue_method
-            rescue_note = (
-                f"A consensus was {100 * n_worst:.1f}% ambiguous, the signature of two "
-                f"ITDs of the same length sharing one length peak. The sample was "
-                f"re-split with <b>{rescue_method}</b>, which reduced ambiguous bases "
-                f"from {n_total} to {alt_total}. The results below are from that "
-                f"re-split."
-            )
-        elif alt_ins is not None:
-            logger.warning(
-                "Rescue rejected: '%s' did not reduce consensus Ns (%d vs %d). "
-                "Keeping the '%s' result.",
-                rescue_method, alt_total, n_total, effective_method,
-            )
-            # the rejected run overwrote the on-disk consensus artefacts
-            insertions_df, df_cons = insertions_and_consensus(comps, reads_df, peak_subsets)
-            rescue_note = (
-                f"A consensus was {100 * n_worst:.1f}% ambiguous, so the sample was "
-                f"re-split with <b>{rescue_method}</b>. That did not reduce ambiguity "
-                f"({alt_total} vs {n_total} ambiguous bases), so the "
-                f"<b>{effective_method}</b> result was kept."
-            )
 
     logger.debug("Per-read insertion found (first 20 reads):")
     logger.debug(insertions_df[:20])
@@ -864,7 +741,6 @@ if __name__ == "__main__":
             plots_dir=flt3_data_folder,
             df_cons=df_cons,
             haplotype_method=applied_method,
-            rescue_note=rescue_note,
             )
 
     # Cleanup temp directory and intermediate files, if log is debug, keep all files

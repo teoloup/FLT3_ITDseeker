@@ -89,11 +89,9 @@ def assignments_to_result(
     `min_child_reads` reads to become a haplotype. If fewer than two clusters
     survive, the peak is left unsplit.
 
-    Reads in sub-threshold clusters are reassigned to the largest surviving
-    cluster rather than dropped. Dropping them would shrink the allele-frequency
-    denominator and inflate every other call; they are most likely error-driven
-    splits off the dominant haplotype, so folding them back is also the
-    conservative choice for ITD count.
+    Reads in sub-threshold clusters fold into the largest survivor rather than
+    being dropped, which would shrink the AF denominator and inflate every other
+    call.
     """
     reads_out = reads_df.copy()
     subsets_out = {k: list(v) for k, v in peak_subsets.items()}
@@ -426,16 +424,10 @@ def _pad_reads_to_equal_length(reads_df: pd.DataFrame, read_ids: List[str],
                                ) -> Tuple[int, int, int]:
     """Write a FASTQ with every read the same length, for AmpliCI.
 
-    AmpliCI requires equal-length reads with no ambiguous bases. Reads are
-    trimmed from the left (which keeps the amplicon start, and therefore the
-    insertion, in frame) and anything shorter than the target is dropped rather
-    than padded -- padding would invent bases the error model would then try to
-    explain.
-
-    The target is a low percentile of the peak's length distribution rather than
-    the mode: trimming to the mode discarded roughly half the reads on real
-    data, because ONT deletion errors put a long tail below it. `length_pct`
-    trades a few trimmed bases for keeping almost every read.
+    AmpliCI needs equal-length reads with no ambiguous bases. Trimmed from the
+    left; shorter reads are dropped rather than padded. The target is a low
+    percentile, not the mode -- ONT deletions leave a tail below the mode that
+    would cost about half the reads.
 
     Returns (written, dropped_short, dropped_ambiguous).
     """
@@ -614,12 +606,7 @@ def split_peaks(
     tool_kwargs: Optional[dict] = None,
 ) -> PeakRefineResult:
     """Split GMM peaks into haplotypes using the named method."""
-    # Methods compose: "gmm2pass+dada2" splits by length first, then clusters
-    # each resulting peak by sequence. That order is the useful one -- length is
-    # cheap and reliable and separates the ITDs that differ in size, leaving the
-    # sequence clusterer only the peaks where length has nothing left to say. It
-    # also removes the dependence on a trigger: chaining looks inside every peak
-    # whether or not the consensus flagged anything.
+    # "gmm2pass+dada2" applies methods in order: length first, then sequence.
     if "+" in method:
         stages = [m.strip() for m in method.split("+") if m.strip()]
         result = PeakRefineResult(comps=comps, reads_df=reads_df,

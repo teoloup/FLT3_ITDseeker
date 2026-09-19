@@ -15,7 +15,7 @@ worked examples from the validation set.
 2. [Quick start](#quick-start)
 3. [How a sample flows through the pipeline](#3-how-a-sample-flows-through-the-pipeline)
 4. [Worked example: a sample with three ITDs](#4-worked-example-a-sample-with-three-itds)
-5. [The same-length problem, and the rescue](#5-the-same-length-problem-and-the-rescue)
+5. [The same-length problem](#5-the-same-length-problem)
 6. [Reading the output](#reading-the-output)
 7. [Parameters that actually matter](#7-parameters-that-actually-matter)
 8. [Known limits](#8-known-limits)
@@ -48,7 +48,7 @@ Fitting a mixture model to those lengths gives you candidate ITDs, their sizes,
 and a first estimate of how common each one is. That is the core of the method,
 and for most samples it is sufficient.
 
-Where it stops working is [section 5](#5-the-same-length-problem-and-the-rescue).
+Where it stops working is [section 5](#5-the-same-length-problem).
 
 ---
 
@@ -114,8 +114,7 @@ BAM
  │                                    → reads normalised to one orientation,
  │                                      strand recorded per read
  ├─ 3. fit read lengths               Gaussian mixture; peaks = WT + candidates
- ├─ 4. split peaks into haplotypes    length-based by default; sequence
- │                                      clustering on demand (section 5)
+ ├─ 4. split peaks into haplotypes    per-peak sequence clustering (DADA2)
  ├─ 5. extract insertions per peak    pairwise align each read to WT,
  │                                      read the inserted bases out
  ├─ 6. build a consensus per peak     weighted MSA over unique insertions
@@ -185,7 +184,7 @@ All three sizes match exactly. Note the third sits below the default
 
 ---
 
-## 5. The same-length problem, and the rescue
+## 5. The same-length problem
 
 ### The problem
 
@@ -204,34 +203,51 @@ one peak, three 45bp ITDs pooled:
 That output is useless, and worse, the reads supporting the second ITD are
 counted towards the first, distorting both allele frequencies.
 
-### The rescue
+### What the pipeline does about it
 
-`N` in a consensus is a *measurement* that the reads disagree. The pipeline uses
-it as a trigger:
-
-1. Split peaks the normal way, build the consensus.
-2. If the worst peak is more than `--rescue-n-fraction` ambiguous (default 5%),
-   re-split the sample from the original peaks using `--rescue-method` (default
-   `dada2`), which clusters reads by **sequence** rather than length.
-3. **Keep the re-split only if it reduces the ambiguity.** If it does not, the
-   original result stands.
-
-Step 3 is what makes this safe: the rescue cannot make the result worse by the
-measure that invoked it.
-
-On simulated data with three 45 bp ITDs sharing one peak:
+The second pass clusters each peak's reads **by sequence**, not by length. The
+flow is simply:
 
 ```
-before rescue:  1 ITD reported,  17 ambiguous bases
-after  rescue:  3 ITDs reported,  0 ambiguous bases
+fit read lengths  ->  peaks
+   for each peak  ->  subset its reads  ->  cluster them with DADA2
+                                              -> one candidate ITD per cluster
+   all candidates ->  insertions, consensus, references, validation, VCF
 ```
 
-On all five real validation samples the trigger **never fires** — their ITDs
-differ in size, so nothing is mixed, and the output is identical with the rescue
-enabled or disabled.
+Two ITDs of the same length land in one length peak, and DADA2 separates them
+there because it is looking at the sequences. Everything downstream is unchanged:
+each cluster becomes a candidate ITD and is validated on the same footing as any
+other.
 
-The rescue is optional. If R or dada2 is not installed, the attempt is logged by
-name and the primary result is kept; the run still succeeds.
+On simulated data with three 45 bp ITDs sharing a peak this recovers two of them
+plus the length-separable 30 bp one; the length-based pass recovered one. On all
+five real validation samples, where the ITDs differ in size, it reproduces the
+length-based result exactly.
+
+**`--haplotype-method` selects the clustering step** if you want to compare:
+`dada2` (default), `isonclust`, `amplici`, `gmm2pass` (the older length-based
+split), `none`, or a chain like `gmm2pass+dada2`.
+
+### Unbalanced mixtures leave no N
+
+An `N` appears only when no base clears `--msa-base-threshold` (0.7), which
+needs the minority to exceed about 30%. **A more lopsided mixture produces no `N`
+at all** — at 80/20 the majority base clears the threshold and a minor ITD would
+be silently absorbed. That is why the split happens unconditionally rather than
+in response to `N`s.
+
+The consensus table reports `max_minor_fraction`, the largest share of any column
+disagreeing with the base called there, as a check that clustering worked:
+
+| | max_minor_fraction |
+|---|---|
+| clean peaks, real samples (6 of them) | 0.024 – 0.101 |
+| 80/20 mixture, before clustering | 0.217 |
+| three-way same-length mixture, before clustering | 0.384 |
+
+A value above ~0.15 in the output means a peak still looks mixed after
+clustering, and those calls should be treated as provisional.
 
 ### Why dada2 and not the others
 
@@ -239,13 +255,13 @@ Three clustering backends are available. Measured against the validation set:
 
 | method | 11531 (1 ITD) | 13697 (3 ITDs) | 14219 (2 ITDs) |
 |---|---|---|---|
-| `gmm2pass` (default) | 1 ✓ | 3 ✓ | 2 ✓ |
-| `dada2` | 1 ✓ | 3 ✓ | 2 ✓ |
+| `dada2` (default) | 1 ✓ | 3 ✓ | 2 ✓ |
+| `gmm2pass` | 1 ✓ | 3 ✓ | 2 ✓ |
 | `isonclust` | 1 ✓ | **2** ✗ | 2 ✓ |
 | `amplici` | 1 ✓ | **2** ✗ | **1** ✗ |
 
-`dada2` is the only backend that matches the length-based baseline everywhere
-while still separating same-length ITDs in simulation. `isonclust` merged the
+`dada2` is the default because it is the only backend that matches the
+length-based baseline everywhere while still separating same-length ITDs. `isonclust` merged the
 30 bp ITD into the 24 bp peak; `amplici` fragmented real ITDs, in one case
 splitting a 37%-AF ITD in two and then losing the call entirely. Neither is safe
 to invoke automatically, though both remain available via `--haplotype-method`.
@@ -316,9 +332,9 @@ normalise first (`bcftools norm`) or compare modulo the ITD length.
   only when both a significant p and a three-fold odds skew are present, or when
   the variant is seen on essentially one strand.
 - **`N` count in `*_itd_consensus_seq.tsv`.** Anything above zero means the reads
-  behind that peak disagree. With the rescue enabled this is usually already
-  handled; if `N`s survive it, the peak may hold two ITDs the tool could not
-  separate, and the call should be treated as provisional.
+  behind that peak disagree. Clustering normally resolves this; if `N`s survive
+  it, the peak may hold two ITDs the tool could not separate, and the call should
+  be treated as provisional.
 
 ### The read-length plot
 
@@ -340,7 +356,6 @@ One card per ITD, carrying the size, genomic position, allele frequency with its
 read counts, strand balance with the Fisher test, and the inserted sequence
 itself (ambiguous bases highlighted). Whether the frame is preserved is shown,
 since `ITD_LEN % 3 != 0` means a frameshift rather than an in-frame duplication.
-If the rescue fired, a banner says so and by how much it reduced ambiguity.
 Everything is inlined, so the file can be archived or emailed on its own.
 
 ---
@@ -354,9 +369,7 @@ measurements are in [`benchmarks/`](benchmarks/).
 |---|---|---|
 | `--min-allele-frequency` | 0.05 | **Often too high.** Real fragment-analysis-confirmed ITDs in this cohort sit at 0.040 and 0.017. Use `0.01` unless you need the stricter floor. |
 | `-t, --threads` | 1 | **8 is the practical maximum.** The parallel stages scale ~9×, but they are only 66–86% of runtime, so total speedup caps near 2.6–3.5×. Past 8 workers you gain ~5% for 2.5× the cores. |
-| `--haplotype-method` | `gmm2pass` | Length-based splitting. Correct on every real sample tested. |
-| `--rescue-method` | `dada2` | Used only when a consensus comes back ambiguous. |
-| `--rescue-n-fraction` | 0.05 | Real samples produced 0% N; a simulated mixed peak produced 47%. Nothing observed in between. |
+| `--haplotype-method` | `dada2` | Per-peak sequence clustering. Separates same-length ITDs; matches the length-based result on every real sample. |
 | `--msa-max-unique` | 150 | Largest single runtime lever — MUSCLE is superlinear in panel size. Raising to 300 roughly triples the consensus stage without changing any call. |
 | `--min-itd-size` / `--max-itd-size` | 12 / 300 | Hard bounds on reportable duplication size. |
 | `--wt-amplicon-length` | 336 | Must match your amplicon. It defines which peak is wild-type, and therefore every ITD size. |
@@ -370,8 +383,8 @@ in `Nano_ITDseeker.py` with them.
 ## 8. Known limits
 
 - **ITDs identical in both length and position**, differing only by substituted
-  bases, are not separated by the default or the rescue. Only `amplici` resolved
-  this in simulation, and it is too aggressive on real data to enable by default.
+  bases, are not separated. Only `amplici` resolved this in simulation, and it
+  is too aggressive on real data to use by default.
   This pattern is biologically uncommon — co-occurring ITDs usually differ in
   size or breakpoint — but a surviving `N` in the consensus is the sign of it.
 - **Detection depends on read-length clustering.** An ITD whose reads do not form
@@ -426,6 +439,6 @@ python evaluate_haplotypes.py --run-dir sim_out --sample simA \
 
 `simulate_itd_data.py` models the error profile measured from the negative
 control, and scenario A deliberately includes ITDs that share a length, so it
-exercises the failure mode that motivates the rescue. `evaluate_haplotypes.py`
+exercises the failure mode that motivates per-peak sequence clustering. `evaluate_haplotypes.py`
 reports recovery, over-splitting, allele-frequency error, ambiguous-base counts
 and read-level clustering agreement.

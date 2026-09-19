@@ -166,11 +166,8 @@ def weighted_consensus_from_msa(
             base_weights[b] = base_weights.get(b, 0.0) + w
         top_base, top_w = max(base_weights.items(), key=lambda kv: kv[1])
         frac = top_w / sum(base_weights.values())
-        # How much of this column disagrees with the base about to be called.
-        # An N only appears once the top base drops below base_threshold, so a
-        # lopsided mixture of two haplotypes -- 80/20, say -- yields a clean
-        # consensus of the majority and no N at all. Tracking the disagreement
-        # itself is what keeps that case visible.
+        # An N only appears once the top base drops below base_threshold, so an
+        # 80/20 mixture looks clean. Track the disagreement itself.
         minor_fractions.append(1.0 - frac)
         consensus_chars.append(top_base if frac >= base_threshold else ambiguous)
 
@@ -217,13 +214,9 @@ def weighted_consensus_from_msa(
 def _consensus_for_peak(task):
     """Panel selection + MSA + weighted consensus for one peak.
 
-    This is lifted verbatim out of build_itd_consensus_sequences so it can be
-    pickled to a process pool. Peaks are independent -- each one reads only its
-    own insertion sequences and writes only its own plot -- so evaluating them
-    concurrently cannot change any individual result. Everything derived from
-    the DataFrame (read counts, median insertion position) stays in the parent,
-    and rows are reassembled in the parent's original peak order, so the output
-    is identical to the serial version rather than merely equivalent.
+    Module level so it can be pickled to a process pool. Peaks are independent;
+    DataFrame-derived values stay in the parent and rows are reassembled in the
+    parent's order, so parallel output is identical to serial.
     """
     (alias, seqs, max_unique, min_weight_coverage, base_threshold,
      min_col_coverage, ambiguous, out_dir, sample_name) = task
