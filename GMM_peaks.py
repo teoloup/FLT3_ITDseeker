@@ -498,6 +498,7 @@ def plot_gmm_itds(
     bins=100,
     out_prefix="gmm_plot",
     title,
+    reported_aliases=None,
     dpi=150
 ):
     """
@@ -517,6 +518,12 @@ def plot_gmm_itds(
         File prefix for saved figure.
     title : str
         Plot title.
+    reported_aliases : set[str] or None
+        Aliases that survived validation and the allele-frequency filter. Peaks
+        outside this set are drawn dimmed and dotted and labelled "not reported",
+        so the plot cannot be read as claiming more ITDs than the VCF contains.
+        None draws every peak as reported, which is correct before validation has
+        run.
     dpi : int
         Image resolution.
     """
@@ -584,20 +591,37 @@ def plot_gmm_itds(
         y = pdf * (n * bin_width) * frac
         mix_curve += y
 
+        # A peak the model fitted is not the same thing as an ITD the pipeline
+        # reported: competitive validation and the allele-frequency filter both
+        # sit downstream, and either can discard a peak. When the caller tells us
+        # which aliases survived, say so on the plot rather than leaving a reader
+        # to wonder why the VCF is shorter than the legend.
+        reported = True if reported_aliases is None else (
+            is_wt or str(alias) in reported_aliases
+        )
+
         # Distinguish WT visually
         color = "black" if is_wt else colors[i]
         lw = 2.5 if is_wt else 2.0
         ls = "-" if is_wt else "--"
+        if not reported:
+            color = "#9aa3ad"
+            lw = 1.4
+            ls = ":"
 
-        ax.plot(xs, y, color=color, lw=lw, ls=ls, alpha=0.9,
+        status = "" if reported or is_wt else "  [not reported]"
+        ax.plot(xs, y, color=color, lw=lw, ls=ls, alpha=0.9 if reported else 0.75,
                 label=f"{alias}: μ={mu:.1f}, σ={sd:.1f}, "
-                      f"model={frac*100:.1f}%, eff={eff_frac*100:.1f}%")
+                      f"model={frac*100:.1f}%, eff={eff_frac*100:.1f}%{status}")
 
         # Annotate with both AFs
         y_max = y.max()
+        note = f"Model AF {frac*100:.1f}%\nFitted AF {eff_frac*100:.1f}%"
+        if not reported:
+            note += "\nnot reported"
         ax.text(
             mu, y_max * 1.05,
-            f"Model AF {frac*100:.1f}%\nFitted AF {eff_frac*100:.1f}%",
+            note,
             ha="center", va="bottom",
             fontsize=8,
             color=color,

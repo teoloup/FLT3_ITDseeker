@@ -16,6 +16,51 @@ logger = logging.getLogger(__name__)
 CHR13_LENGTH = {"hg38": 114364328, "hg19": 115169878}
 
 
+def _fmt_or(value):
+    """Odds ratio for the VCF, guarding the degenerate all-one-strand case."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return "."
+    if v != v:            # NaN
+        return "."
+    if v in (float("inf"), float("-inf")):
+        return "Inf"
+    return f"{v:.3g}"
+
+
+def strand_bias_is_real(odds_ratio, pval, plus, minus,
+                        min_fold=3.0, max_p=0.05):
+    """Decide whether a strand split is worth warning about.
+
+    The Fisher p-value alone is not usable as a flag: it scales with depth, so a
+    deep amplicon trips any fixed threshold on a difference far too small to
+    matter. Measured on sample 10808, an ITD at 49.3% plus against a wild type at
+    52.4% plus -- three percentage points, odds ratio 0.885 -- gives p = 0.0005 at
+    13,537 reads and p = 0.71 at 269 reads. Same biology, opposite verdict.
+
+    So the p-value is treated as necessary but not sufficient: the effect has to
+    be a `min_fold` skew in the odds as well. A variant seen on essentially one
+    strand is flagged regardless, since that is the pattern that actually
+    indicates an artefact.
+    """
+    total = (plus or 0) + (minus or 0)
+    if total:
+        frac = (plus or 0) / total
+        if frac <= 0.05 or frac >= 0.95:
+            return True
+    try:
+        p = float(pval)
+        orr = float(odds_ratio)
+    except (TypeError, ValueError):
+        return False
+    if p != p or orr != orr or p > max_p:
+        return False
+    if orr in (float("inf"), float("-inf")) or orr == 0:
+        return True
+    return orr >= min_fold or orr <= 1.0 / min_fold
+
+
 def format_pvalue(pval):
     """Render a p-value without collapsing small ones to 0.0."""
     if pval is None or pd.isna(pval):
@@ -45,7 +90,8 @@ def build_vcf_header(genome_build=None, chr_name="chr13"):
         '##INFO=<ID=DP,Number=1,Type=Integer,Description="Total read depth">',
         '##INFO=<ID=AF_GMM,Number=1,Type=Float,Description="Allele frequency from GMM clustering">',
         '##INFO=<ID=AF_FITTED,Number=1,Type=Float,Description="Allele frequency from fitted model">',
-        '##INFO=<ID=FISHER_P,Number=1,Type=Float,Description="Fisher exact test p-value for strand bias">',
+        '##INFO=<ID=FISHER_P,Number=1,Type=Float,Description="Fisher exact test p-value for strand bias vs the WT strand split. Depth-sensitive: interpret with STRAND_OR.">',
+        '##INFO=<ID=STRAND_OR,Number=1,Type=Float,Description="Odds ratio of the ITD strand split against the WT split. 1.0 means no bias. This is the effect size that FISHER_P does not convey.">',
         '##INFO=<ID=ITD_LEN,Number=1,Type=Integer,Description="Length of ITD insertion">',
         '##INFO=<ID=INS_POS,Number=1,Type=Integer,Description="Insertion position on reference genome">',
         '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">',
@@ -134,6 +180,7 @@ def export_itd_vcf(summary_df, ref_dict, itd_refs, comps, output_path, genome_bu
             "AF_GMM": round(af_gmm, 5) if not pd.isna(af_gmm) else ".",
             "AF_FITTED": round(af_fit, 5) if not pd.isna(af_fit) else ".",
             "FISHER_P": format_pvalue(sb_pval),
+            "STRAND_OR": _fmt_or(row.get("odds_ratio", None)),
             "ITD_LEN": itd_len,
             "INS_POS": pos
         }
@@ -196,21 +243,24 @@ def _af_bar(af):
     )
 
 
-def _strand_cell(plus, minus, pval):
+def _strand_cell(plus, minus, pval, odds_ratio=None):
     total = (plus or 0) + (minus or 0)
     if not total:
         return '<span class="muted">n/a</span>'
     frac = (plus or 0) / total
     try:
-        p = float(pval)
-        flag = ' <span class="warn">bias</span>' if p < 0.05 else ""
-        ptxt = f"{p:.3g}"
+        ptxt = f"{float(pval):.3g}"
     except (TypeError, ValueError):
-        flag, ptxt = "", "."
+        ptxt = "."
+    ortxt = _fmt_or(odds_ratio)
+    flag = ""
+    if strand_bias_is_real(odds_ratio, pval, plus, minus):
+        flag = ' <span class="warn">bias</span>'
     return (
-        f'{_fmt_int(plus)} + / {_fmt_int(minus)} -'
+        f'{_fmt_int(plus)} + / {_fmt_int(minus)} - '
+        f'<span class="muted">({frac*100:.1f}% plus)</span>'
         f'<div class="ministack"><div class="ministack-plus" style="width:{frac*100:.0f}%"></div></div>'
-        f'<span class="muted">Fisher p={ptxt}</span>{flag}'
+        f'<span class="muted">odds ratio {ortxt}, Fisher p={ptxt}</span>{flag}'
     )
 
 
@@ -273,6 +323,7 @@ def generate_itd_html_report(
         plus = row.get("plus_reads", 0)
         minus = row.get("minus_reads", 0)
         pval = row.get("fisher_p", None)
+        orr = row.get("odds_ratio", None)
 
         cons = cons_by_alias.get(alias)
         n_count = int(cons["consensus_seq"].count("N")) if cons is not None else itd_seq.count("N")
@@ -290,11 +341,8 @@ def generate_itd_html_report(
             flags.append(('warn', f'{n_count} ambiguous base' + ('' if n_count == 1 else 's')))
         if dp and alt_n < 50:
             flags.append(('warn', f'only {alt_n} supporting reads'))
-        try:
-            if pval is not None and float(pval) < 0.05:
-                flags.append(('warn', 'strand bias'))
-        except (TypeError, ValueError):
-            pass
+        if strand_bias_is_real(orr, pval, plus, minus):
+            flags.append(('warn', 'strand bias'))
         if af < 0.02:
             flags.append(('info', 'low allele frequency'))
         if itd_len % 3:
@@ -352,7 +400,7 @@ def generate_itd_html_report(
     </div>
     <div class="metric">
       <div class="label">Strand balance</div>
-      <div class="value small">{_strand_cell(plus, minus, pval)}</div>
+      <div class="value small">{_strand_cell(plus, minus, pval, orr)}</div>
     </div>
   </div>
 
@@ -568,9 +616,12 @@ def generate_itd_html_report(
   <p class="muted" style="margin-top:28px">
     Allele frequency is the share of validated, classified reads assigned to this
     ITD by competitive alignment against the wild-type and per-ITD references.
-    Strand balance compares this ITD's plus/minus split against the wild-type
-    split by Fisher's exact test; a low p-value suggests a strand artefact rather
-    than biology. Positions are 1-based on the plus strand.
+    Strand balance compares this ITD plus/minus split against the wild-type split.
+    The odds ratio is the effect size (1.0 means no bias); the Fisher p-value
+    scales with depth, so on a deep amplicon a three-percentage-point difference
+    can reach p&lt;0.001 while being biologically meaningless. A bias flag needs
+    both: a significant p AND at least a three-fold skew in the odds, or a
+    variant seen on essentially one strand. Positions are 1-based on the plus strand.
   </p>
 </div>
 </body>

@@ -777,6 +777,31 @@ if __name__ == "__main__":
     if summary_df.empty:
         finalize_no_itd("No ITDs passed validation and allele-frequency filtering.")
 
+    # Redraw the read-length plot now that validation has run. The first pass
+    # (above) is drawn before any peak has been tested, so it necessarily shows
+    # peaks the pipeline later discards -- a peak that collects no validated
+    # reads, or falls under --min-allele-frequency, never reaches the VCF.
+    # Marking those keeps the plot and the VCF telling the same story.
+    reported_aliases = set(summary_df["ref_alias"].astype(str)) if not summary_df.empty else set()
+    plot_gmm_itds(
+        reads_df=reads_df,
+        comps=comps,
+        bins=100,
+        assign_mode=peak_read_assignment_mode,
+        out_prefix=out_prefix,
+        title="FLT3-ITD Read Length Distribution",
+        reported_aliases=reported_aliases,
+    )
+    dropped = [
+        str(a) for a in comps["peak_alias"].astype(str)
+        if a.upper() != "WT" and a not in reported_aliases
+    ]
+    if dropped:
+        logger.info(
+            "Peaks fitted but not reported (no validated support or below the "
+            "allele-frequency threshold): %s", ", ".join(dropped),
+        )
+
     # Save VCF file with validated ITD calls
     logger.info("Writing validated ITD calls to VCF...")
     vcf_path = f"{sample_name}_FLT3_ITD_calls.vcf"

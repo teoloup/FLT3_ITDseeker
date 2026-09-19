@@ -288,7 +288,8 @@ chr13  28034081  ITD_1  C  CCAAACTCTAAATTTTCTCTTGGAAACTCCCATTTGAGATCATATT  .  PA
 | `DP` | classified reads contributing to AF |
 | `AD` | reference-supporting, ITD-supporting |
 | `SB` | ITD-supporting reads as `plus,minus` |
-| `FISHER_P` | strand bias of this ITD against the wild-type strand split |
+| `FISHER_P` | Fisher p for this ITD's strand split against the wild-type split. **Depth-sensitive — do not read alone.** |
+| `STRAND_OR` | odds ratio for that comparison. 1.0 is no bias. This is the effect size. |
 | `ITD_LEN` | duplication size in bp |
 
 **Orientation.** FLT3 is transcribed from the minus strand of chr13. `REF` and
@@ -305,13 +306,33 @@ normalise first (`bcftools norm`) or compare modulo the ITD length.
 - **`AF` against `AF_GMM`.** They should be close. A large gap means competitive
   validation reassigned many reads, which is worth understanding before trusting
   the call.
-- **`FISHER_P`.** Below 0.05 means this ITD's strand split differs from the
-  wild-type split, which can indicate a trimming or read-quality artefact rather
-  than biology.
+- **`STRAND_OR` before `FISHER_P`.** The p-value scales with depth, so on a deep
+  amplicon it flags differences far too small to matter. Sample 10808 in the
+  validation set has an ITD at 49.3% plus against a wild type at 52.4% plus —
+  three percentage points, odds ratio 0.885, no meaningful bias — and Fisher
+  returns p = 0.0005 purely because there are 13,537 reads. The same split at 269
+  reads gives p = 0.71. Read `STRAND_OR`: 1.0 is balanced, and it takes roughly a
+  three-fold skew before a strand artefact is plausible. The report flags bias
+  only when both a significant p and a three-fold odds skew are present, or when
+  the variant is seen on essentially one strand.
 - **`N` count in `*_itd_consensus_seq.tsv`.** Anything above zero means the reads
   behind that peak disagree. With the rescue enabled this is usually already
   handled; if `N`s survive it, the peak may hold two ITDs the tool could not
   separate, and the call should be treated as provisional.
+
+### The read-length plot
+
+The plot shows every peak the model fitted, but a fitted peak is not a reported
+ITD — competitive validation and the allele-frequency filter both sit downstream
+and either can discard one. Peaks that did not survive are drawn dotted and grey
+and labelled **not reported**, so the plot and the VCF agree.
+
+Sample 11531 is the worked case: the length-based second pass split one peak into
+components 3.18 bp apart, the smaller produced a 123 bp consensus against its own
+expected 190.9 bp, and competitive validation gave it zero reads. It appears on
+the plot, correctly marked, and not in the VCF. A discarded peak is usually a
+spurious split rather than a missed ITD, but it is worth a look when it carries
+many reads.
 
 ### The HTML report
 

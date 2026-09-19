@@ -310,7 +310,11 @@ chr13  28034081  ITD_1  C  CCAAACTCTAAATTTTCTCTTGGAAACTCCCATTTGAGATCATATT  .  PA
 </tr>
 <tr>
 <td style="text-align:left"><code>FISHER_P</code></td>
-<td style="text-align:left">strand bias of this ITD against the wild-type strand split</td>
+<td style="text-align:left">Fisher p for this ITD&#x27;s strand split against the wild-type split. <strong>Depth-sensitive — do not read alone.</strong></td>
+</tr>
+<tr>
+<td style="text-align:left"><code>STRAND_OR</code></td>
+<td style="text-align:left">odds ratio for that comparison. 1.0 is no bias. This is the effect size.</td>
 </tr>
 <tr>
 <td style="text-align:left"><code>ITD_LEN</code></td>
@@ -325,13 +329,16 @@ chr13  28034081  ITD_1  C  CCAAACTCTAAATTTTCTCTTGGAAACTCCCATTTGAGATCATATT  .  PA
 </ul>
 <p>  validation reassigned many reads, which is worth understanding before trusting   the call.</p>
 <ul>
-<li><strong><code>FISHER_P</code>.</strong> Below 0.05 means this ITD&#x27;s strand split differs from the</li>
+<li><strong><code>STRAND_OR</code> before <code>FISHER_P</code>.</strong> The p-value scales with depth, so on a deep</li>
 </ul>
-<p>  wild-type split, which can indicate a trimming or read-quality artefact rather   than biology.</p>
+<p>  amplicon it flags differences far too small to matter. Sample 10808 in the   validation set has an ITD at 49.3% plus against a wild type at 52.4% plus —   three percentage points, odds ratio 0.885, no meaningful bias — and Fisher   returns p = 0.0005 purely because there are 13,537 reads. The same split at 269   reads gives p = 0.71. Read <code>STRAND_OR</code>: 1.0 is balanced, and it takes roughly a   three-fold skew before a strand artefact is plausible. The report flags bias   only when both a significant p and a three-fold odds skew are present, or when   the variant is seen on essentially one strand.</p>
 <ul>
 <li><strong><code>N</code> count in <code>*_itd_consensus_seq.tsv</code>.</strong> Anything above zero means the reads</li>
 </ul>
 <p>  behind that peak disagree. With the rescue enabled this is usually already   handled; if <code>N</code>s survive it, the peak may hold two ITDs the tool could not   separate, and the call should be treated as provisional.</p>
+<h3 id="the-read-length-plot">The read-length plot</h3>
+<p>The plot shows every peak the model fitted, but a fitted peak is not a reported ITD — competitive validation and the allele-frequency filter both sit downstream and either can discard one. Peaks that did not survive are drawn dotted and grey and labelled <strong>not reported</strong>, so the plot and the VCF agree.</p>
+<p>Sample 11531 is the worked case: the length-based second pass split one peak into components 3.18 bp apart, the smaller produced a 123 bp consensus against its own expected 190.9 bp, and competitive validation gave it zero reads. It appears on the plot, correctly marked, and not in the VCF. A discarded peak is usually a spurious split rather than a missed ITD, but it is worth a look when it carries many reads.</p>
 <h3 id="the-html-report">The HTML report</h3>
 <p>One card per ITD, carrying the size, genomic position, allele frequency with its read counts, strand balance with the Fisher test, and the inserted sequence itself (ambiguous bases highlighted). Whether the frame is preserved is shown, since <code>ITD_LEN % 3 != 0</code> means a frameshift rather than an in-frame duplication. If the rescue fired, a banner says so and by how much it reduced ambiguity. Everything is inlined, so the file can be archived or emailed on its own.</p>
 <hr>

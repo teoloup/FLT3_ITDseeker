@@ -230,8 +230,18 @@ def simulate(scenario: str, n_reads: int, seed: int, out_dir: str) -> Dict[str, 
             seq, qual = apply_errors(alleles[hap.name], rng)
             # reads are emitted with primers attached; the pipeline trims them
             is_reverse = bool(rng.random() < 0.5)
-            stored = revcomp(seq) if is_reverse else seq
-            stored_qual = qual[::-1] if is_reverse else qual
+            # An aligner stores SEQ in *reference* orientation whatever the
+            # molecule's original direction; flag 0x10 is what records that the
+            # read was sequenced on the minus strand. So SEQ is the plus-strand
+            # sequence for every read, and only the flag differs.
+            #
+            # Reverse-complementing here as well would be wrong twice over:
+            # `samtools fastq` undoes the flag by reverse-complementing, so a
+            # pre-flipped read comes back plus-oriented, cutadapt --rc finds
+            # nothing to flip, and every read ends up tagged '+'. That made the
+            # simulated data unable to exercise the strand-bias test at all.
+            stored = seq
+            stored_qual = qual
 
             read_id = f"sim{scenario}_{i:06d}"
             a = pysam.AlignedSegment()
