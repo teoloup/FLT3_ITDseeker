@@ -13,6 +13,7 @@ from Bio.Seq import Seq
 
 from bam_extractor import extract_flt3_reads
 from GMM_peaks import fit_gmm_itds, plot_gmm_itds, refine_peak_substructure_once
+from haplotype_split import BACKENDS, split_peaks
 from Pairwise_aligment_toolkit import align_reads_multi_ref_parallel
 from Write_output import export_itd_vcf, generate_itd_html_report, call_no_itd
 from Helper_functions import extract_itd_insertions_from_subset_parallel, plot_itd_size_distribution, build_itd_reference_per_peak, make_validation_refs, prepare_validation_reads, calculate_allele_frequencies_and_strand_bias
@@ -94,6 +95,46 @@ if __name__ == "__main__":
         "--disable-subpeak-refinement", action="store_true", help="Disable one-level local refinement of each initial ITD peak."
     )
     parser.add_argument(
+        "--haplotype-method", type=str, default="gmm2pass",
+        choices=sorted(BACKENDS),
+        help=(
+            "How to split each GMM length peak into haplotypes. 'gmm2pass' is the "
+            "length-based second pass (default, previous behaviour); 'isonclust' "
+            "clusters each peak's reads by sequence, which can separate two ITDs "
+            "of the same length; 'none' keeps the first-pass peaks (default: gmm2pass)."
+        ),
+    )
+    parser.add_argument(
+        "--cluster-wt-peak", action="store_true",
+        help="Also run haplotype splitting on the WT peak, to look for ITDs hiding inside it (default: off).",
+    )
+    parser.add_argument(
+        "--min-haplotype-reads", type=int, default=20,
+        help="Minimum reads for a sequence cluster to become its own haplotype (default: 20).",
+    )
+    parser.add_argument(
+        "--isonclust-k", type=int, default=13,
+        help="isONclust k-mer size. The --ont preset is 13, tuned to separate genes; ITD haplotypes may need lower (default: 13).",
+    )
+    parser.add_argument(
+        "--isonclust-w", type=int, default=20,
+        help="isONclust window size (default: 20).",
+    )
+    parser.add_argument(
+        "--isonclust-aligned-threshold", type=float, default=0.80,
+        help=(
+            "isONclust minimum aligned fraction for a read to join a cluster. Its own "
+            "default of 0.4 is for separating genes and returned a single cluster on "
+            "simulated data (no separation at all); 0.95+ fragments into hundreds of "
+            "clusters. 0.80 was the best of a sweep against known haplotypes "
+            "(default: 0.80)."
+        ),
+    )
+    parser.add_argument(
+        "--isonclust-mapped-threshold", type=float, default=0.90,
+        help="isONclust minimum mapped fraction of a read (tool default 0.7) (default: 0.90).",
+    )
+    parser.add_argument(
         "--min-reads-for-subpeak-refinement", type=int, default=150, help="Minimum reads in a parent peak to attempt one-level subpeak refinement (default: 150)."
     )
     parser.add_argument(
@@ -169,6 +210,13 @@ if __name__ == "__main__":
     max_peak_sd = args.max_peak_sd
     min_gmm_peak_distance = args.min_gmm_peak_distance
     enable_subpeak_refinement = not args.disable_subpeak_refinement
+    haplotype_method = args.haplotype_method
+    cluster_wt_peak = args.cluster_wt_peak
+    min_haplotype_reads = args.min_haplotype_reads
+    isonclust_k = args.isonclust_k
+    isonclust_w = args.isonclust_w
+    isonclust_aligned_threshold = args.isonclust_aligned_threshold
+    isonclust_mapped_threshold = args.isonclust_mapped_threshold
     min_reads_for_subpeak_refinement = args.min_reads_for_subpeak_refinement
     min_subpeak_fraction = args.min_subpeak_fraction
     min_subpeak_distance = args.min_subpeak_distance
@@ -339,17 +387,37 @@ if __name__ == "__main__":
     peak_subsets = gmm_fit.peak_subsets
 
     if enable_subpeak_refinement:
-        logger.info("Running one-level per-peak substructure refinement...")
-        refine_result = refine_peak_substructure_once(
+        effective_method = haplotype_method
+    else:
+        # --disable-subpeak-refinement predates --haplotype-method and still wins.
+        effective_method = "none"
+
+    logger.info(f"Splitting peaks into haplotypes using method: {effective_method}")
+    if effective_method != "none":
+        refine_result = split_peaks(
+            effective_method,
             comps=comps,
             reads_df=reads_df,
             peak_subsets=peak_subsets,
-            min_reads_for_refinement=min_reads_for_subpeak_refinement,
-            min_child_fraction=min_subpeak_fraction,
-            min_subpeak_distance=min_subpeak_distance,
-            max_subpeak_sd=max_subpeak_sd,
-            min_bic_gain_for_split=min_bic_gain_for_subpeak_split,
             wt_amplicon_length=wt_amplicon_length,
+            threads=threads,
+            work_dir=os.path.join(temp_dir, "haplotypes"),
+            cluster_wt_peak=cluster_wt_peak,
+            min_child_fraction=min_subpeak_fraction,
+            min_child_reads=min_haplotype_reads,
+            gmm_kwargs=dict(
+                min_reads_for_refinement=min_reads_for_subpeak_refinement,
+                min_child_fraction=min_subpeak_fraction,
+                min_subpeak_distance=min_subpeak_distance,
+                max_subpeak_sd=max_subpeak_sd,
+                min_bic_gain_for_split=min_bic_gain_for_subpeak_split,
+            ),
+            tool_kwargs=dict(
+                k=isonclust_k,
+                w=isonclust_w,
+                aligned_threshold=isonclust_aligned_threshold,
+                mapped_threshold=isonclust_mapped_threshold,
+            ),
         )
         comps = refine_result.comps
         reads_df = refine_result.reads_df

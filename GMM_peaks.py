@@ -59,12 +59,17 @@ def fit_gmm_itds(
         if isinstance(entry, dict):
             seq = entry.get("seq", "")
             strand = entry.get("strand", "+")
+            # Phred+33 string; may be absent for sequence-only inputs.
+            qual = entry.get("qual", "")
         else:
             # Backward compatibility with older {read_id: seq} format.
             seq = entry
             strand = "+"
-        data.append((rid, seq, strand, len(seq)))
-    df = pd.DataFrame(data, columns=["read_id", "read_seq", "strand", "read_len"])
+            qual = ""
+        data.append((rid, seq, qual, strand, len(seq)))
+    df = pd.DataFrame(
+        data, columns=["read_id", "read_seq", "read_qual", "strand", "read_len"]
+    )
     X = df["read_len"].to_numpy(dtype=float).reshape(-1, 1)
     n = len(X)
 

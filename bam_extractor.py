@@ -17,6 +17,21 @@ import shutil
 
 logger = logging.getLogger(__name__)
 
+# Phred+33 offset, as written in FASTQ and expected by the haplotype clusterers.
+PHRED_OFFSET = 33
+
+
+def _phred_to_string(rec) -> str:
+    """Render a SeqRecord's base qualities as a Phred+33 string.
+
+    Returns an empty string when the record carries no qualities, which keeps
+    sequence-only inputs usable by everything that does not need Q.
+    """
+    quals = rec.letter_annotations.get("phred_quality")
+    if not quals:
+        return ""
+    return "".join(chr(min(int(q), 93) + PHRED_OFFSET) for q in quals)
+
 
 class FLT3ReadExtractor:
     """Extract and process reads from BAM file"""
@@ -179,7 +194,15 @@ class FLT3ReadExtractor:
             if rec.id in reads:
                 n_duplicate_ids += 1
             # Keep cutadapt sequence orientation as output, store original orientation via strand tag.
-            reads[rec.id] = {"seq": str(rec.seq), "strand": strand}
+            # Base qualities are kept as a Phred+33 string: the haplotype clusterers
+            # (isONclust, DADA2, AmpliCI) are all quality-aware and need them written
+            # back out per peak. Stored as text rather than a list of ints because it
+            # goes straight into a FASTQ record.
+            reads[rec.id] = {
+                "seq": str(rec.seq),
+                "strand": strand,
+                "qual": _phred_to_string(rec),
+            }
 
         if n_duplicate_ids:
             logger.warning(
