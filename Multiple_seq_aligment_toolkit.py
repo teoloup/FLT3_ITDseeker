@@ -198,7 +198,7 @@ def weighted_consensus_from_msa(
         out_path = os.path.join(out_dir, fname)
         fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
         plt.close(fig)
-        print(f"[weighted_consensus_from_msa] Saved: {os.path.abspath(out_path)}")
+        logger.info("[weighted_consensus_from_msa] Saved: %s", os.path.abspath(out_path))
 
     return consensus
 
@@ -360,6 +360,6 @@ def build_itd_consensus_sequences(
     consensus_name = f"{sample_name}_itd_consensus_seq.tsv"
     out_tsv = os.path.join(out_dir, consensus_name)
     df_cons.to_csv(out_tsv, sep="\t", index=False)
-    print(f"[build_itd_consensus_sequences] Saved: {os.path.abspath(out_tsv)}")
+    logger.info("[build_itd_consensus_sequences] Saved: %s", os.path.abspath(out_tsv))
 
     return df_cons

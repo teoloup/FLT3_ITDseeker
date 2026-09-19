@@ -17,16 +17,52 @@ from Bio.SeqRecord import SeqRecord
 from scipy.stats import fisher_exact
 logger = logging.getLogger(__name__)
 
+# Biopython 1.85 renamed the gap-score attributes and warns on every use of the
+# old names. An aligner is built per worker per chunk, so that is thousands of
+# BiopythonDeprecationWarning lines through a run, drowning the progress output.
+# The old names are also slated for removal, so this is not only cosmetic.
+#
+# Setting whichever name the installed version provides keeps the pipeline quiet
+# on new Biopython and working on the versions requirements.txt still allows.
+_GAP_SCORE_NAMES = {
+    "target_open_gap_score": "open_insertion_score",
+    "target_extend_gap_score": "extend_insertion_score",
+    "target_end_gap_score": "end_insertion_score",
+    "query_open_gap_score": "open_deletion_score",
+    "query_extend_gap_score": "extend_deletion_score",
+    "query_end_gap_score": "end_deletion_score",
+}
+
+
+# Probed on the class, not an instance. Several of these are aggregate
+# properties whose getter raises ValueError("gap scores are different") once the
+# underlying values diverge, so hasattr() on a part-configured aligner blows up
+# rather than answering the question. The class attribute is the property object
+# itself and is always safe to look at.
+_HAS_MODERN_GAP_NAMES = hasattr(Align.PairwiseAligner, "open_insertion_score")
+
+
+def set_gap_scores(aligner, **scores):
+    """Set gap scores by their legacy names, using the current names if present."""
+    for legacy, value in scores.items():
+        name = _GAP_SCORE_NAMES.get(legacy, legacy) if _HAS_MODERN_GAP_NAMES else legacy
+        setattr(aligner, name, value)
+    return aligner
+
+
 def build_default_aligner() -> Align.PairwiseAligner:
     aligner = Align.PairwiseAligner()
     aligner.match_score = 2
     aligner.mismatch_score = -5
-    aligner.target_open_gap_score = -15
-    aligner.target_extend_gap_score = -0.05
-    aligner.query_open_gap_score = -200
-    aligner.query_extend_gap_score = -1.5
-    aligner.query_end_gap_score = 0
-    aligner.target_end_gap_score = 0
+    set_gap_scores(
+        aligner,
+        target_open_gap_score=-15,
+        target_extend_gap_score=-0.05,
+        query_open_gap_score=-200,
+        query_extend_gap_score=-1.5,
+        query_end_gap_score=0,
+        target_end_gap_score=0,
+    )
     aligner.mode = "global"
     return aligner
 
@@ -413,7 +449,7 @@ def extract_itd_insertions_from_subset_parallel(
 
     # --- Skip WT ---
     if peak_alias.upper() == "WT":
-        print(f"[INFO] Skipping WT subset alignment ({peak_alias})")
+        logger.info("Skipping WT subset alignment (%s)", peak_alias)
         return pd.DataFrame()
 
     # --- Retrieve expected ITD range ---
@@ -501,7 +537,7 @@ def plot_itd_size_distribution(all_itd_insertions, out_dir, sample_name=None, bi
         Number of histogram bins.
     """
     if all_itd_insertions.empty:
-        print("[plot_itd_size_distribution] No insertions found. Skipping plot.")
+        logger.info("[plot_itd_size_distribution] No insertions found. Skipping plot.")
         return
 
     plt.figure(figsize=(8, 5), dpi=150)
@@ -568,7 +604,7 @@ def plot_itd_size_distribution(all_itd_insertions, out_dir, sample_name=None, bi
     plt.savefig(fname, dpi=150, bbox_inches="tight")
     plt.close()
 
-    print(f"[plot_itd_size_distribution] Saved: {os.path.abspath(fname)}")
+    logger.info("[plot_itd_size_distribution] Saved: %s", os.path.abspath(fname))
 
 def build_itd_reference_per_peak(
     df_cons,
@@ -803,7 +839,7 @@ def plot_itd_vs_ref_with_genome(
     fig.savefig(out_path, dpi=dpi)
     plt.close(fig)
 
-    print(f"[plot_itd_vs_ref_with_genome] Saved plot: {os.path.abspath(out_path)}")
+    logger.info("[plot_itd_vs_ref_with_genome] Saved plot: %s", os.path.abspath(out_path))
 
     aligner = build_default_aligner()
     alignment = aligner.align(ref_seq, itd_ref_seq)[0]

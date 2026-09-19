@@ -11,6 +11,7 @@ from Bio import Align
 from Helper_functions import (
     percent_identity,
     span_identity,
+    set_gap_scores,
     compute_adjusted_score,
     softmax,
     classify_read_support,
@@ -24,12 +25,15 @@ def build_validation_aligner() -> Align.PairwiseAligner:
     aligner = Align.PairwiseAligner()
     aligner.match_score = 2
     aligner.mismatch_score = -2
-    aligner.target_open_gap_score = -15
-    aligner.target_extend_gap_score = -0.01
-    aligner.query_open_gap_score = -200
-    aligner.query_extend_gap_score = -2
-    aligner.query_end_gap_score = -200
-    aligner.target_end_gap_score = -200
+    set_gap_scores(
+        aligner,
+        target_open_gap_score=-15,
+        target_extend_gap_score=-0.01,
+        query_open_gap_score=-200,
+        query_extend_gap_score=-2,
+        query_end_gap_score=-200,
+        target_end_gap_score=-200,
+    )
     aligner.mode = "global"
     return aligner
 

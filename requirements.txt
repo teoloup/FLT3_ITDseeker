@@ -11,7 +11,9 @@ scipy>=1.9
 matplotlib>=3.6
 seaborn>=0.12
 scikit-learn>=1.2
-biopython>=1.80,<1.90         # Alignment.aligned semantics; gap-score attrs deprecate in 1.85+
+biopython>=1.80               # gap-score attributes are set by whichever name the
+                              # installed version exposes, so 1.85+ is quiet and
+                              # older releases still work (see set_gap_scores)
 pysam>=0.21
 cutadapt>=4.0                 # also usable as a standalone binary
 
