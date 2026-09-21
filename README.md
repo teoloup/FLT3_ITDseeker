@@ -20,7 +20,7 @@
 - Python 3.9+ (recommended)
 - External tools in `PATH`:
   - `samtools`
-  - `cutadapt`
+  - `cutadapt >= 5.2` (required for rightmost matching of the linked 3-prime primer)
 - Python packages:
   - `numpy`, `pandas`, `matplotlib`, `seaborn`, `scikit-learn`, `scipy`
   - `biopython`, `pymuscle5`, `pysam`
@@ -54,6 +54,7 @@ python Nano_ITDseeker.py \
 - `--min-itd-size`, `--max-itd-size`: ITD size constraints
 - `--per-peak-read-assignment-mode`: `manual|predict_proba|hybrid`
 - `--force-number-of-peaks`: force initial GMM component count
+- `--wt-peak-tolerance`: maximum WT peak offset from expected amplicon length (default 5 bp; must be smaller than `--min-itd-size`)
 - `--html-report`: write HTML report
 - `--remove-intermediate-files`: delete `flt3_data` at end
 
@@ -121,3 +122,24 @@ and a C toolchain. `samtools` and `cutadapt` must both resolve on `PATH` --
 installing cutadapt only inside a virtualenv that is not on `PATH` is not
 enough, since the pipeline invokes it as a subprocess by name.
 
+
+## Validation correctness
+
+A WT length peak is optional. If none lies within `--wt-peak-tolerance` of
+`--wt-amplicon-length`, candidate insertion sizes use the configured WT length.
+When `--cluster-wt-peak` splits a WT peak, the closest eligible child keeps the
+WT label; other children receive ITD aliases and undergo normal validation.
+
+For multi-reference comparisons, a winning z-score must also have a softmax
+probability margin of at least 0.05 over the runner-up. Exact and near ties remain
+ambiguous. These softmax scores are relative alignment scores, not calibrated
+variant probabilities. Breakpoint validation counts both insertions and deletions
+within the ITD window against its gap allowance.
+
+The DADA2 backend honors `--threads` for both error learning and denoising.
+
+Run the focused regression suite with the Python dependencies installed:
+
+```bash
+python -m unittest discover -s tests -v
+```

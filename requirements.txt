@@ -15,7 +15,7 @@ biopython>=1.80               # gap-score attributes are set by whichever name t
                               # installed version exposes, so 1.85+ is quiet and
                               # older releases still work (see set_gap_scores)
 pysam>=0.21
-cutadapt>=4.0                 # also usable as a standalone binary
+cutadapt>=5.2                 # rightmost matching on the linked 3-prime adapter
 
 # Build-time requirement for pymuscle5
 cython

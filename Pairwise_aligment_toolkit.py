@@ -220,7 +220,7 @@ def align_reads_multi_ref_parallel(reads_df, ref_dict, df_cons, logger, threads=
     df_second = ranked[ranked["_rank"] == 1].reset_index(drop=True)
 
     df_best = df_best.merge(
-        df_second[["read_id", "ref_alias", "metric_value"]],
+        df_second[["read_id", "ref_alias", "metric_value", "prob_score"]],
         on="read_id",
         suffixes=("", "_second"),
         how="left",
@@ -231,6 +231,7 @@ def align_reads_multi_ref_parallel(reads_df, ref_dict, df_cons, logger, threads=
     df_best["second_best_ref"] = df_best["ref_alias_second"]
     df_best["second_best_score"] = df_best["metric_value_second"]
     df_best["delta"] = df_best["metric_value"] - df_best["metric_value_second"]
+    df_best["prob_delta"] = df_best["prob_score"] - df_best["prob_score_second"]
     df_best.drop(columns=["ref_alias_second", "metric_value_second"], inplace=True, errors="ignore")
 
     # --- Classification ---

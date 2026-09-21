@@ -78,6 +78,7 @@ def assignments_to_result(
     wt_amplicon_length: float,
     min_child_fraction: float,
     min_child_reads: int,
+    wt_peak_tolerance: float = 5.0,
 ) -> PeakRefineResult:
     """Turn per-peak read->cluster labels into the standard refinement result.
 
@@ -100,13 +101,12 @@ def assignments_to_result(
 
     wt_rows = comps.loc[comps["peak_alias"].astype(str).str.upper() == "WT"]
     if wt_rows.empty:
-        wt_mean = float(
-            comps.loc[(comps["mean_bp"] - wt_amplicon_length).abs().idxmin(), "mean_bp"]
-        )
+        wt_mean = float(wt_amplicon_length)
     else:
         wt_mean = float(wt_rows.iloc[0]["mean_bp"])
 
     split_children: Dict[str, List[Dict]] = {}
+    used_aliases = set(subsets_out)
 
     for parent_alias, read_to_cluster in assignments.items():
         parent_reads = subsets_out.get(parent_alias, [])
@@ -158,7 +158,14 @@ def assignments_to_result(
         ):
             lengths = np.array([len_by_read[r] for r in rids if r in len_by_read],
                                dtype=float)
-            child_alias = f"{parent_alias}_H{i}"
+            prefix = "ITD_WT" if parent_alias.upper() == "WT" else parent_alias
+            base_alias = f"{prefix}_H{i}"
+            child_alias = base_alias
+            suffix = 2
+            while child_alias in used_aliases:
+                child_alias = f"{base_alias}_{suffix}"
+                suffix += 1
+            used_aliases.add(child_alias)
             children.append({
                 "alias": child_alias,
                 "read_ids": rids,
@@ -171,6 +178,16 @@ def assignments_to_result(
                 parent_alias, child_alias, len(rids),
                 children[-1]["mean_bp"], children[-1]["sd_bp"],
             )
+
+        if parent_alias.upper() == "WT":
+            # WT-like length is a provisional label. All other children must use
+            # variant aliases understood by extraction and competitive validation.
+            closest = min(children, key=lambda ch: abs(ch["mean_bp"] - wt_amplicon_length))
+            if abs(closest["mean_bp"] - wt_amplicon_length) <= wt_peak_tolerance:
+                closest["alias"] = "WT"
+                wt_mean = closest["mean_bp"]
+            else:
+                wt_mean = float(wt_amplicon_length)
 
         split_children[parent_alias] = children
         subsets_out.pop(parent_alias, None)
@@ -201,7 +218,7 @@ def assignments_to_result(
                     "effective_read_count": count,
                     "effective_allele_freq": frac,
                     "putative_itd_size": ch["mean_bp"] - wt_mean,
-                    "is_wt": False,
+                    "is_wt": ch["alias"] == "WT",
                     "peak_alias": ch["alias"],
                     "parent_peak_alias": alias,
                     "refinement_level": 1,
@@ -340,6 +357,7 @@ def _backend_isonclust(**kw) -> PeakRefineResult:
         wt_amplicon_length=kw["wt_amplicon_length"],
         min_child_fraction=kw["min_child_fraction"],
         min_child_reads=kw["min_child_reads"],
+        wt_peak_tolerance=kw.get("wt_peak_tolerance", 5.0),
     )
 
 
@@ -390,7 +408,8 @@ def _backend_dada2(**kw) -> PeakRefineResult:
         )
 
         cmd = [rscript, script, fq, tsv, fa, str(omega_a), str(band_size),
-               str(hp_penalty), str(kw["min_child_reads"])]
+               str(hp_penalty), str(kw["min_child_reads"]),
+               str(max(1, int(kw.get("threads", 1))))]
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if res.returncode != 0:
             raise RuntimeError(
@@ -416,6 +435,7 @@ def _backend_dada2(**kw) -> PeakRefineResult:
         wt_amplicon_length=kw["wt_amplicon_length"],
         min_child_fraction=kw["min_child_fraction"],
         min_child_reads=kw["min_child_reads"],
+        wt_peak_tolerance=kw.get("wt_peak_tolerance", 5.0),
     )
 
 
@@ -536,6 +556,7 @@ def _backend_amplici(**kw) -> PeakRefineResult:
         wt_amplicon_length=kw["wt_amplicon_length"],
         min_child_fraction=kw["min_child_fraction"],
         min_child_reads=kw["min_child_reads"],
+        wt_peak_tolerance=kw.get("wt_peak_tolerance", 5.0),
     )
 
 
@@ -600,6 +621,7 @@ def split_peaks(
     threads: int = 1,
     work_dir: Optional[str] = None,
     cluster_wt_peak: bool = False,
+    wt_peak_tolerance: float = 5.0,
     min_child_fraction: float = 0.15,
     min_child_reads: int = 20,
     gmm_kwargs: Optional[dict] = None,
@@ -624,6 +646,7 @@ def split_peaks(
                 work_dir=(os.path.join(work_dir, f"stage{n}_{stage}")
                           if work_dir else None),
                 cluster_wt_peak=cluster_wt_peak,
+                wt_peak_tolerance=wt_peak_tolerance,
                 min_child_fraction=min_child_fraction,
                 min_child_reads=min_child_reads,
                 gmm_kwargs=gmm_kwargs,
@@ -655,6 +678,7 @@ def split_peaks(
             threads=threads,
             work_dir=work_dir,
             cluster_wt_peak=cluster_wt_peak,
+            wt_peak_tolerance=wt_peak_tolerance,
             min_child_fraction=min_child_fraction,
             min_child_reads=min_child_reads,
             gmm_kwargs=gmm_kwargs,

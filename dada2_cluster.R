@@ -16,7 +16,7 @@
 #
 # Usage:
 #   Rscript dada2_cluster.R <in.fastq> <out_clusters.tsv> <out_asvs.fasta> \
-#       [omega_a] [band_size] [homopolymer_gap_penalty] [min_asv_reads]
+#       [omega_a] [band_size] [homopolymer_gap_penalty] [min_asv_reads] [threads]
 
 suppressPackageStartupMessages({
   library(dada2)
@@ -25,7 +25,7 @@ suppressPackageStartupMessages({
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 3) {
-  stop("usage: dada2_cluster.R <in.fastq> <out_clusters.tsv> <out_asvs.fasta> [omega_a] [band_size] [hp_gap_penalty] [min_asv_reads]")
+  stop("usage: dada2_cluster.R <in.fastq> <out_clusters.tsv> <out_asvs.fasta> [omega_a] [band_size] [hp_gap_penalty] [min_asv_reads] [threads]")
 }
 fastq_in    <- args[1]
 clusters_out<- args[2]
@@ -34,6 +34,9 @@ omega_a     <- if (length(args) >= 4) as.numeric(args[4]) else 1e-40
 band_size   <- if (length(args) >= 5) as.integer(args[5]) else 32L
 hp_penalty  <- if (length(args) >= 6) as.numeric(args[6]) else -1
 min_reads   <- if (length(args) >= 7) as.integer(args[7]) else 20L
+threads     <- if (length(args) >= 8) as.integer(args[8]) else 1L
+if (is.na(threads) || threads < 1L) stop("threads must be a positive integer")
+message(sprintf("[dada2_cluster] using %d thread(s)", threads))
 
 setDadaOpt(BAND_SIZE = band_size, HOMOPOLYMER_GAP_PENALTY = hp_penalty)
 
@@ -54,7 +57,7 @@ if (length(derep$uniques) < 2) {
 # amplicon at one length, so the error profile is homogeneous and the sample is
 # what we actually want to denoise.
 err <- tryCatch(
-  learnErrors(fastq_in, multithread = TRUE, verbose = FALSE,
+  learnErrors(fastq_in, multithread = threads, verbose = FALSE,
               errorEstimationFunction = loessErrfun, randomize = FALSE),
   error = function(e) {
     message("[dada2_cluster] learnErrors failed (", conditionMessage(e),
@@ -63,7 +66,7 @@ err <- tryCatch(
   }
 )
 
-dd <- dada(derep, err = err, multithread = TRUE, verbose = FALSE,
+dd <- dada(derep, err = err, multithread = threads, verbose = FALSE,
            OMEGA_A = omega_a, selfConsist = is.null(err))
 
 asv_seqs <- dd$sequence

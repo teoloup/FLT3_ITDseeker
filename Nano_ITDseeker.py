@@ -71,6 +71,10 @@ if __name__ == "__main__":
         "--wt-amplicon-length",  type = int, default = 336, help = "Amplicon length of wild type"
     )
     parser.add_argument(
+        "--wt-peak-tolerance", type=float, default=5.0,
+        help="Maximum distance from expected WT length to label a peak WT (bp; default: 5).",
+    )
+    parser.add_argument(
         "--per-peak-read-assignment-mode",  type = str, default = "manual", choices=['manual', 'predict_proba', 'hybrid'], help = "Read assignment mode for each peak (default: manual)"
     )
     parser.add_argument(
@@ -223,6 +227,8 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+    if args.wt_peak_tolerance < 0 or args.wt_peak_tolerance >= args.min_itd_size:
+        parser.error("--wt-peak-tolerance must be nonnegative and smaller than --min-itd-size")
     
     # creating the logger object, and setting the log level
     logger = logging.getLogger()
@@ -412,6 +418,7 @@ if __name__ == "__main__":
             min_ggmm_peak_distance=min_gmm_peak_distance,
             force_k=force_k,
             wt_amplicon_length=wt_amplicon_length,
+            wt_peak_tolerance=args.wt_peak_tolerance,
         )
     except RuntimeError as e:
         if "No GMM components passed filtering criteria" in str(e):
@@ -447,6 +454,7 @@ if __name__ == "__main__":
             threads=threads,
             work_dir=os.path.join(temp_dir, f"haplotypes{work_tag}"),
             cluster_wt_peak=cluster_wt_peak,
+            wt_peak_tolerance=args.wt_peak_tolerance,
             min_child_fraction=min_subpeak_fraction,
             min_child_reads=min_haplotype_reads,
             gmm_kwargs=dict(

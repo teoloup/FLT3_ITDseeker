@@ -34,6 +34,7 @@ def fit_gmm_itds(
     assign_mode,        # "manual", "predict_proba", or "hybrid"
     prob_threshold,
     wt_amplicon_length=336,
+    wt_peak_tolerance=5.0,
     force_k=None,
     reg=1e-3,
     seed=42
@@ -241,18 +242,19 @@ def fit_gmm_itds(
     comps["effective_read_count"] = [eff_counts[i] for i in comps.index]
     comps["effective_allele_freq"] = comps["effective_read_count"] / total_eff
 
-    # Give each peak an alias and flag the WT peak as the component whose mean
-    # read length sits closest to the configured WT amplicon length.
-    wt_peak_id = (comps["mean_bp"] - wt_amplicon_length).abs().idxmin()
-
-    #Compute putative ITD size (bp difference relative to WT)
-    comps["putative_itd_size"] = comps["mean_bp"] - comps.loc[wt_peak_id, "mean_bp"]
+    # A sample need not contain WT. Do not relabel an arbitrary ITD as WT.
+    closest = (comps["mean_bp"] - wt_amplicon_length).abs().idxmin()
+    wt_peak_id = (closest if abs(comps.loc[closest, "mean_bp"] - wt_amplicon_length)
+                  <= wt_peak_tolerance else None)
+    wt_mean = (float(comps.loc[wt_peak_id, "mean_bp"]) if wt_peak_id is not None
+               else float(wt_amplicon_length))
+    comps["putative_itd_size"] = comps["mean_bp"] - wt_mean
     comps["is_wt"] = comps.index == wt_peak_id
-    logger.info(
-        "WT peak: mean=%.1f bp (configured WT amplicon length=%d bp, offset=%+.1f bp)",
-        comps.loc[wt_peak_id, "mean_bp"], wt_amplicon_length,
-        comps.loc[wt_peak_id, "mean_bp"] - wt_amplicon_length,
-    )
+    if wt_peak_id is None:
+        logger.info("No WT peak within %.1f bp of %d; using reference length as baseline.",
+                    wt_peak_tolerance, wt_amplicon_length)
+    else:
+        logger.info("WT peak: mean=%.1f bp (expected=%d bp)", wt_mean, wt_amplicon_length)
 
     #Assign aliases before sorting(store in a new column, not the DataFrame index)
     comps["peak_alias"] = [
@@ -320,9 +322,7 @@ def refine_peak_substructure_once(
 
     wt_rows = comps.loc[comps["peak_alias"].str.upper() == "WT"]
     if wt_rows.empty:
-        wt_mean = float(
-            comps.loc[(comps["mean_bp"] - wt_amplicon_length).abs().idxmin(), "mean_bp"]
-        )
+        wt_mean = float(wt_amplicon_length)
     else:
         wt_mean = float(wt_rows.iloc[0]["mean_bp"])
 

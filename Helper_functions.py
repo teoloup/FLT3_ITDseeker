@@ -224,7 +224,10 @@ def classify_read_support(row, metric_used, z_thresh=1.0, delta_thresh=0.05):
 
     # --- Z-score metric ---
     if metric_used == "z_score":
-        if abs(val) >= z_thresh:
+        # Z measures separation from the panel mean, not from the runner-up.
+        # Require a probability margin too, regardless of reference count.
+        margin = row.get("prob_delta", row.get("delta", 0.0))
+        if val >= z_thresh and margin >= delta_thresh:
             return "ITD-supporting" if "ITD" in alias else "WT-supporting"
         else:
             return "Ambiguous"
@@ -302,18 +305,22 @@ def validate_itd_supporting_reads(
                 reasons.append("missing_alignment_blocks")
                 continue
 
-            # Residual insertions in the read relative to the ITD reference.
+            # Residual insertions AND deletions relative to the ITD reference.
             # The read is aligned to wt[:ins_pos] + itd + wt[ins_pos:], so in
             # ITD-reference coordinates the duplicated segment spans
             # [ins_pos, ins_pos + itd_len); anything within gap_window of that
             # span counts as sitting on a breakpoint.
             lo = ins_pos - gap_window
             hi = ins_pos + itd_len + gap_window
-            gaps_near = sum(
-                ins_len
-                for t_end, _q_end, ins_len in insertions_from_aligned_blocks(aln_blocks)
-                if lo <= t_end <= hi
-            )
+            t_blocks, q_blocks = aln_blocks
+            gaps_near = 0
+            for i in range(len(t_blocks) - 1):
+                t_end, t_next = int(t_blocks[i][1]), int(t_blocks[i + 1][0])
+                q_end, q_next = int(q_blocks[i][1]), int(q_blocks[i + 1][0])
+                # A deletion spans a target interval; count it if that interval
+                # overlaps the ITD window, even when it starts before the window.
+                if t_end <= hi and t_next >= lo:
+                    gaps_near += (t_next - t_end) + (q_next - q_end)
 
             if pid < min_pid:
                 validated.append(False)
@@ -505,13 +512,16 @@ def plot_itd_size_distribution(all_itd_insertions, out_dir, sample_name=None, bi
     plt.figure(figsize=(8, 5), dpi=150)
 
     # --- Main histogram + KDE ---
+    # A constant-length peak has singular covariance: draw its histogram
+    # without KDE instead of aborting the variant-calling pipeline.
+    kde_ok = bool((all_itd_insertions.groupby("peak_alias")["ins_len"].nunique() > 1).all())
     sns.histplot(
         data=all_itd_insertions,
         x="ins_len",
         bins=bins,
         hue="peak_alias",
         multiple="stack",
-        kde=True,
+        kde=kde_ok,
         alpha=0.6,
         edgecolor=None,
     )
