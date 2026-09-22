@@ -19,7 +19,7 @@ Two matching subtleties, both real rather than cosmetic:
 
 Usage:
     python evaluate_haplotypes.py --run-dir out/ --sample simA \\
-        --truth-dir sim_data --scenario A --method isonclust
+        --truth-dir sim_data --scenario A --method dada2
 """
 
 import argparse

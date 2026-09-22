@@ -99,3 +99,7 @@ The earlier review remains a historical record. Its medium-priority merged-poste
 incomplete-cluster-membership, final-haplotype-cap, and low-depth-GMM findings remain
 open. The new WT tolerance is a configurable heuristic; neither it nor the softmax
 score is a calibrated biological confidence measure.
+
+## Follow-up
+
+See [CONSENSUS_VALIDATION.md](CONSENSUS_VALIDATION.md) for the contextual allele consensus fix, final synthetic results, DADA2-only cleanup, and exact external command audit.

@@ -4,6 +4,8 @@ BAM Read Extractor Module
 Extracts reads mapping to FLT3 region and performs primer trimming
 """
 
+from command_audit import record_command
+
 import logging
 import pysam
 from pathlib import Path
@@ -111,10 +113,8 @@ class FLT3ReadExtractor:
         # so a path containing a quote or a space cannot break (or inject into)
         # a command line.
         fastq_cmd = ["samtools", "fastq", "-"]
-        logger.info(
-            "Running samtools view + fastq for region: %s | %s > %s",
-            " ".join(samtools_view_cmd), " ".join(fastq_cmd), fastq_out,
-        )
+        record_command(samtools_view_cmd, stdin="inherited", stdout="pipe:samtools-fastq", stderr="captured")
+        record_command(fastq_cmd, stdin="pipe:samtools-view", stdout=os.path.abspath(fastq_out), stderr="captured")
         view_proc = subprocess.Popen(
             samtools_view_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
@@ -171,8 +171,7 @@ class FLT3ReadExtractor:
             fastq_in
         ]
 
-        logger.info(f"Running cutadapt for primer trimming: {' '.join(cutadapt_cmd)}")
-        logger.debug(f"Full cutadapt command: {cutadapt_cmd}")
+        record_command(cutadapt_cmd, stdin="inherited", stdout="captured", stderr="captured")
         result = subprocess.run(cutadapt_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if result.returncode != 0:
             logger.error(f"Cutadapt failed: {result.stderr.decode()}")
@@ -195,7 +194,7 @@ class FLT3ReadExtractor:
                 n_duplicate_ids += 1
             # Keep cutadapt sequence orientation as output, store original orientation via strand tag.
             # Base qualities are kept as a Phred+33 string: the haplotype clusterers
-            # (isONclust, DADA2, AmpliCI) are all quality-aware and need them written
+            # (DADA2) is quality-aware and needs them written
             # back out per peak. Stored as text rather than a list of ints because it
             # goes straight into a FASTQ record.
             reads[rec.id] = {

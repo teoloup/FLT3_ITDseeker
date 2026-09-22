@@ -297,7 +297,7 @@ def validate_itd_supporting_reads(
                 reasons.append("missing_insertion_position")
                 continue
 
-            ins_pos = int(ins_row["median_ins_pos_ref"].iloc[0])
+            ins_pos = int(ins_row.iloc[0].get("consensus_ins_pos_ref", ins_row.iloc[0].get("median_ins_pos_ref")))
             itd_len = int(ins_row["consensus_len"].iloc[0]) if "consensus_len" in ins_row else 0
 
             if aln_blocks is None or len(aln_blocks) != 2:
@@ -628,7 +628,7 @@ def build_itd_reference_per_peak(
     for _, row in df_cons.iterrows():
         alias = row["peak_alias"]
         itd_seq = row["consensus_seq"]
-        ins_pos_local = int(row["median_ins_pos_ref"])
+        ins_pos_local = int(row.get("consensus_ins_pos_ref", row.get("median_ins_pos_ref")))
 
         # Convert local insertion boundary to a 1-based genomic anchor coordinate.
         if ins_pos_local < 1:

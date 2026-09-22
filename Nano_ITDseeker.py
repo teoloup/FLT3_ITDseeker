@@ -11,8 +11,9 @@ import traceback
 from pathlib import Path
 from Bio.Seq import Seq
 
+from command_audit import configure_command_log
 from bam_extractor import extract_flt3_reads
-from GMM_peaks import fit_gmm_itds, plot_gmm_itds, refine_peak_substructure_once
+from GMM_peaks import fit_gmm_itds, plot_gmm_itds
 from haplotype_split import BACKENDS, split_peaks
 from Pairwise_aligment_toolkit import align_reads_multi_ref_parallel
 from Write_output import export_itd_vcf, generate_itd_html_report, call_no_itd
@@ -99,15 +100,8 @@ if __name__ == "__main__":
         "--disable-subpeak-refinement", action="store_true", help="Disable one-level local refinement of each initial ITD peak."
     )
     parser.add_argument(
-        "--haplotype-method", type=str, default="dada2",
-        help=(
-            "How to split each GMM length peak into haplotypes. 'dada2' clusters "
-            "each peak's reads by sequence and is the default: it separates two ITDs "
-            "of the same length, which no length-based method can. 'gmm2pass' is the "
-            "older length-based split, 'none' keeps the first-pass peaks. Methods "
-            f"chain with '+'. Available: {', '.join(sorted(BACKENDS))} "
-            "(default: dada2)."
-        ),
+        "--haplotype-method", choices=sorted(BACKENDS), default="dada2",
+        help="Per-peak sequence clustering: dada2 (default), or none to disable splitting.",
     )
     parser.add_argument(
         "--cluster-wt-peak", action="store_true",
@@ -116,28 +110,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--min-haplotype-reads", type=int, default=20,
         help="Minimum reads for a sequence cluster to become its own haplotype (default: 20).",
-    )
-    parser.add_argument(
-        "--isonclust-k", type=int, default=13,
-        help="isONclust k-mer size. The --ont preset is 13, tuned to separate genes; ITD haplotypes may need lower (default: 13).",
-    )
-    parser.add_argument(
-        "--isonclust-w", type=int, default=20,
-        help="isONclust window size (default: 20).",
-    )
-    parser.add_argument(
-        "--isonclust-aligned-threshold", type=float, default=0.80,
-        help=(
-            "isONclust minimum aligned fraction for a read to join a cluster. Its own "
-            "default of 0.4 is for separating genes and returned a single cluster on "
-            "simulated data (no separation at all); 0.95+ fragments into hundreds of "
-            "clusters. 0.80 was the best of a sweep against known haplotypes "
-            "(default: 0.80)."
-        ),
-    )
-    parser.add_argument(
-        "--isonclust-mapped-threshold", type=float, default=0.90,
-        help="isONclust minimum mapped fraction of a read (tool default 0.7) (default: 0.90).",
     )
     parser.add_argument(
         "--dada2-omega-a", type=float, default=1e-40,
@@ -152,48 +124,7 @@ if __name__ == "__main__":
         help="DADA2 HOMOPOLYMER_GAP_PENALTY, softening gaps where ONT errors concentrate (default: -1.0).",
     )
     parser.add_argument(
-        "--amplici-indel-rate", type=float, default=0.007,
-        help=(
-            "AmpliCI indel error rate. Its own default of 6e-5 is an Illumina figure; "
-            "the rate measured on this data's ONT negative control is ~0.7%%, and "
-            "leaving it at the Illumina value makes AmpliCI read every ONT indel as a "
-            "distinct haplotype (default: 0.007)."
-        ),
-    )
-    parser.add_argument(
-        "--amplici-abundance", type=float, default=2.0,
-        help="AmpliCI minimum scaled abundance for a haplotype (default: 2.0).",
-    )
-    parser.add_argument(
-        "--amplici-log-likelihood", type=float, default=-100000.0,
-        help=(
-            "AmpliCI per-read log-likelihood floor for assigning a read to a haplotype. "
-            "Its own default of -100 is an Illumina figure and left 85%% of ONT reads "
-            "unassigned in testing (default: -100000)."
-        ),
-    )
-    parser.add_argument(
-        "--amplici-length-percentile", type=float, default=5.0,
-        help=(
-            "Percentile of the peak's read-length distribution to trim to for AmpliCI, "
-            "which requires equal-length reads. Trimming to the mode discarded about "
-            "half the reads (default: 5.0)."
-        ),
-    )
-    parser.add_argument(
-        "--min-reads-for-subpeak-refinement", type=int, default=150, help="Minimum reads in a parent peak to attempt one-level subpeak refinement (default: 150)."
-    )
-    parser.add_argument(
         "--min-subpeak-fraction", type=float, default=0.15, help="Minimum fraction per child subpeak when splitting a parent peak (default: 0.15)."
-    )
-    parser.add_argument(
-        "--min-subpeak-distance", type=float, default=3.0, help="Minimum distance (bp) between child means to keep a split (default: 3.0)."
-    )
-    parser.add_argument(
-        "--max-subpeak-sd", type=float, default=5.0, help="Maximum SD (bp) for each child subpeak in refinement (default: 5.0)."
-    )
-    parser.add_argument(
-        "--min-bic-gain-for-subpeak-split", type=float, default=10.0, help="Minimum BIC gain (k=1 minus k=2) to accept a local split (default: 10.0)."
     )
     parser.add_argument(
         "--msa-max-unique", type=int, default=150, help="Maximum unique insertion sequences used per peak for MSA consensus (default: 150)."
@@ -261,15 +192,7 @@ if __name__ == "__main__":
     haplotype_method = args.haplotype_method
     cluster_wt_peak = args.cluster_wt_peak
     min_haplotype_reads = args.min_haplotype_reads
-    isonclust_k = args.isonclust_k
-    isonclust_w = args.isonclust_w
-    isonclust_aligned_threshold = args.isonclust_aligned_threshold
-    isonclust_mapped_threshold = args.isonclust_mapped_threshold
-    min_reads_for_subpeak_refinement = args.min_reads_for_subpeak_refinement
     min_subpeak_fraction = args.min_subpeak_fraction
-    min_subpeak_distance = args.min_subpeak_distance
-    max_subpeak_sd = args.max_subpeak_sd
-    min_bic_gain_for_subpeak_split = args.min_bic_gain_for_subpeak_split
     msa_max_unique = args.msa_max_unique
     msa_min_weight_coverage = args.msa_min_weight_coverage
     msa_base_threshold = args.msa_base_threshold
@@ -303,6 +226,8 @@ if __name__ == "__main__":
         except Exception as e:
             logger.error(f"Error creating FLT3 data folder: {e}")
             sys.exit(1)
+
+    configure_command_log(output_folder / f"{sample_name}_commands.jsonl")
 
     if not Path(bam_file).exists():
         logger.error(f"BAM file does not exist: {bam_file}")
@@ -457,25 +382,10 @@ if __name__ == "__main__":
             wt_peak_tolerance=args.wt_peak_tolerance,
             min_child_fraction=min_subpeak_fraction,
             min_child_reads=min_haplotype_reads,
-            gmm_kwargs=dict(
-                min_reads_for_refinement=min_reads_for_subpeak_refinement,
-                min_child_fraction=min_subpeak_fraction,
-                min_subpeak_distance=min_subpeak_distance,
-                max_subpeak_sd=max_subpeak_sd,
-                min_bic_gain_for_split=min_bic_gain_for_subpeak_split,
-            ),
             tool_kwargs=dict(
-                k=isonclust_k,
-                w=isonclust_w,
-                aligned_threshold=isonclust_aligned_threshold,
-                mapped_threshold=isonclust_mapped_threshold,
                 dada2_omega_a=args.dada2_omega_a,
                 dada2_band_size=args.dada2_band_size,
                 dada2_homopolymer_gap_penalty=args.dada2_homopolymer_gap_penalty,
-                amplici_indel_rate=args.amplici_indel_rate,
-                amplici_abundance=args.amplici_abundance,
-                amplici_log_likelihood=args.amplici_log_likelihood,
-                amplici_length_percentile=args.amplici_length_percentile,
             ),
         )
         return result.comps, result.reads_df, result.peak_subsets
@@ -554,6 +464,9 @@ if __name__ == "__main__":
         cons = build_itd_consensus_sequences(
             all_itd_insertions=ins_df,
             comps=cur_comps,
+            ref_seq=ref_seq,
+            min_itd_size=min_itd_size,
+            max_itd_size=max_itd_length,
             out_dir=flt3_data_folder,
             sample_name=sample_name,
             max_unique=msa_max_unique,

@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         samtools \
         build-essential \
         zlib1g-dev libbz2-dev liblzma-dev libcurl4-openssl-dev libssl-dev \
-        git \
+        git curl bzip2 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/itdseeker
@@ -27,20 +27,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
     && pip install --no-cache-dir cython \
     && pip install --no-cache-dir -r requirements.txt
-
-# --- haplotype-splitting backends -------------------------------------------
-# Each is optional at runtime (--haplotype-method picks one), but the image
-# carries all of them so a comparison run needs no extra setup.
-
-# isONclust: the pip package is the Python implementation, which is enough here.
-RUN pip install --no-cache-dir isONclust
-
-# AmpliCI: source only, and it exits non-zero even on success, so the build
-# checks that the binary exists rather than that it runs cleanly.
-RUN git clone --depth 1 https://github.com/DormanLab/AmpliCI /opt/AmpliCI \
-    && cd /opt/AmpliCI/src && cmake . && make -j"$(nproc)" \
-    && ln -s /opt/AmpliCI/src/run_AmpliCI /usr/local/bin/run_AmpliCI \
-    && test -x /usr/local/bin/run_AmpliCI
 
 # dada2: R + Bioconductor. Bioconductor lags new R releases, so rather than
 # pinning an R version here and having it drift, this uses a bioconda env, which
@@ -60,8 +46,6 @@ COPY *.py dada2_cluster.R ./
 RUN samtools --version | head -1 \
     && cutadapt --version \
     && python -c "import pymuscle5, pysam, Bio, sklearn; print('python deps OK')" \
-    && isONclust --version \
-    && test -x /usr/local/bin/run_AmpliCI \
     && "$ITDSEEKER_RSCRIPT" -e 'library(dada2); cat("dada2", as.character(packageVersion("dada2")), "OK\n")'
 
 ENTRYPOINT ["python", "/opt/itdseeker/Nano_ITDseeker.py"]

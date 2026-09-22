@@ -16,17 +16,19 @@ trimmed, so each tool sees the kind of input it was built for. Peaks are
 clustered independently.
 """
 
+from command_audit import record_command
+
 import logging
 import os
 import shutil
 import subprocess
 import tempfile
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
-from GMM_peaks import PeakRefineResult, refine_peak_substructure_once
+from GMM_peaks import PeakRefineResult
 
 logger = logging.getLogger(__name__)
 
@@ -271,96 +273,6 @@ def _backend_none(**kw) -> PeakRefineResult:
     )
 
 
-def _backend_gmm2pass(**kw) -> PeakRefineResult:
-    """Baseline: the existing one-level length-based refinement, unchanged."""
-    opts = kw.get("gmm_kwargs") or {}
-    return refine_peak_substructure_once(
-        comps=kw["comps"],
-        reads_df=kw["reads_df"],
-        peak_subsets=kw["peak_subsets"],
-        wt_amplicon_length=kw["wt_amplicon_length"],
-        **opts,
-    )
-
-
-def _backend_isonclust(**kw) -> PeakRefineResult:
-    """Cluster each peak's reads with isONclust.
-
-    isONclust is quality-aware and takes FASTQ directly, writing
-    `final_clusters.tsv` as (cluster_id, read_id). Its `--ont` preset (k=13,
-    w=20) is tuned to separate genes; ITD haplotypes differ far less than that,
-    so k/w are exposed for tuning.
-    """
-    binary = _require_tool("isONclust", "isonclust")
-    comps, reads_df = kw["comps"], kw["reads_df"]
-    peak_subsets = kw["peak_subsets"]
-    opts = kw.get("tool_kwargs") or {}
-    k = int(opts.get("k", 13))
-    w = int(opts.get("w", 20))
-    # isONclust defaults aligned_threshold to 0.4 and mapped_threshold to 0.7,
-    # which are right for deciding whether two reads came from the same *gene*.
-    # ITD haplotypes differ over a few dozen bases of an otherwise identical
-    # read, so at those defaults every haplotype in a peak joins one cluster.
-    # Both are raised here and exposed for tuning. 0.80 was picked by sweeping
-    # against simulated data with known haplotypes: 0.4 and 0.6 return a single
-    # cluster (no separation at all), 0.8 gives ARI 0.68 at 89% cluster purity,
-    # and 0.95+ fragments into hundreds of clusters (ARI 0.25 and falling).
-    aligned_threshold = float(opts.get("aligned_threshold", 0.80))
-    mapped_threshold = float(opts.get("mapped_threshold", 0.90))
-    threads = int(kw.get("threads", 1))
-    work_dir = kw["work_dir"]
-
-    assignments: Dict[str, Dict[str, str]] = {}
-    for alias in _target_peaks(comps, kw.get("cluster_wt_peak", False)):
-        read_ids = peak_subsets.get(alias, [])
-        if len(read_ids) < kw["min_child_reads"] * 2:
-            continue
-
-        peak_dir = os.path.join(work_dir, f"isonclust_{alias}")
-        os.makedirs(peak_dir, exist_ok=True)
-        fq = os.path.join(peak_dir, "reads.fastq")
-        n = write_peak_fastq(reads_df, read_ids, fq)
-        logger.info(
-            "[haplotype_split] isONclust on %s (%d reads, k=%d w=%d "
-            "aligned_threshold=%.2f mapped_threshold=%.2f)",
-            alias, n, k, w, aligned_threshold, mapped_threshold,
-        )
-
-        out_dir = os.path.join(peak_dir, "out")
-        cmd = [binary, "--fastq", fq, "--outfolder", out_dir,
-               "--k", str(k), "--w", str(w), "--t", str(threads),
-               "--aligned_threshold", str(aligned_threshold),
-               "--mapped_threshold", str(mapped_threshold)]
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if res.returncode != 0:
-            raise RuntimeError(
-                f"isONclust failed on peak {alias}: {res.stderr.decode()[-2000:]}"
-            )
-
-        tsv = os.path.join(out_dir, "final_clusters.tsv")
-        if not os.path.exists(tsv):
-            raise RuntimeError(
-                f"isONclust produced no final_clusters.tsv for peak {alias} "
-                f"(looked in {out_dir})"
-            )
-        mapping: Dict[str, str] = {}
-        with open(tsv) as fh:
-            for line in fh:
-                parts = line.rstrip("\n").split("\t")
-                if len(parts) >= 2:
-                    mapping[parts[1]] = parts[0]
-        assignments[alias] = mapping
-
-    return assignments_to_result(
-        comps=comps, reads_df=reads_df, peak_subsets=peak_subsets,
-        assignments=assignments,
-        wt_amplicon_length=kw["wt_amplicon_length"],
-        min_child_fraction=kw["min_child_fraction"],
-        min_child_reads=kw["min_child_reads"],
-        wt_peak_tolerance=kw.get("wt_peak_tolerance", 5.0),
-    )
-
-
 def _backend_dada2(**kw) -> PeakRefineResult:
     """Denoise each peak's reads into ASVs with DADA2, via an Rscript wrapper.
 
@@ -410,6 +322,7 @@ def _backend_dada2(**kw) -> PeakRefineResult:
         cmd = [rscript, script, fq, tsv, fa, str(omega_a), str(band_size),
                str(hp_penalty), str(kw["min_child_reads"]),
                str(max(1, int(kw.get("threads", 1))))]
+        record_command(cmd, stdin="inherited", stdout="captured", stderr="captured")
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if res.returncode != 0:
             raise RuntimeError(
@@ -439,175 +352,9 @@ def _backend_dada2(**kw) -> PeakRefineResult:
     )
 
 
-def _pad_reads_to_equal_length(reads_df: pd.DataFrame, read_ids: List[str],
-                               path: str, length_pct: float = 5.0
-                               ) -> Tuple[int, int, int]:
-    """Write a FASTQ with every read the same length, for AmpliCI.
-
-    AmpliCI needs equal-length reads with no ambiguous bases. Trimmed from the
-    left; shorter reads are dropped rather than padded. The target is a low
-    percentile, not the mode -- ONT deletions leave a tail below the mode that
-    would cost about half the reads.
-
-    Returns (written, dropped_short, dropped_ambiguous).
-    """
-    subset = reads_df.loc[reads_df["read_id"].isin(read_ids)]
-    lengths = [len(s) for s in subset["read_seq"] if s]
-    if not lengths:
-        return 0, 0, 0
-    target_len = int(np.percentile(lengths, length_pct))
-
-    written = short = ambig = 0
-    with open(path, "w", newline="\n") as fh:
-        for row in subset.itertuples(index=False):
-            seq = row.read_seq or ""
-            if len(seq) < target_len:
-                short += 1
-                continue
-            seq = seq[:target_len]
-            if set(seq) - set("ACGT"):
-                ambig += 1
-                continue
-            qual = (getattr(row, "read_qual", "") or "")[:target_len]
-            if len(qual) != target_len:
-                qual = "I" * target_len
-            fh.write(f"@{row.read_id}\n{seq}\n+\n{qual}\n")
-            written += 1
-    return written, short, ambig
-
-
-def _backend_amplici(**kw) -> PeakRefineResult:
-    """Denoise each peak's reads into haplotypes with AmpliCI.
-
-    AmpliCI models substitution *and* indel errors and estimates them from the
-    sample, which is the closest fit of the three tools to what ONT data needs
-    and to the case of two near-identical haplotypes. Its constraints are the
-    awkward part: equal-length reads, no ambiguous bases, and an indel rate
-    parameter whose default (6e-5) is an Illumina figure. The measured ONT indel
-    rate on this data is ~0.7%, so the default here is raised to match; leaving
-    it at the Illumina value makes AmpliCI read every ONT indel as a distinct
-    haplotype.
-    """
-    binary = _require_tool("run_AmpliCI", "amplici")
-    comps, reads_df = kw["comps"], kw["reads_df"]
-    peak_subsets = kw["peak_subsets"]
-    opts = kw.get("tool_kwargs") or {}
-    indel_rate = float(opts.get("amplici_indel_rate", 0.007))
-    abundance = float(opts.get("amplici_abundance", 2.0))
-    # AmpliCI refuses to assign a read whose log-likelihood under the winning
-    # haplotype is below --log_likelihood, default -100. That is an Illumina
-    # figure: on ONT reads the per-read log-likelihoods run to -2000 and below,
-    # so the default left 85% of reads unassigned (NA) in testing, which would
-    # gut the allele-frequency denominator.
-    log_likelihood = float(opts.get("amplici_log_likelihood", -100000.0))
-    length_pct = float(opts.get("amplici_length_percentile", 5.0))
-    work_dir = kw["work_dir"]
-
-    assignments: Dict[str, Dict[str, str]] = {}
-    for alias in _target_peaks(comps, kw.get("cluster_wt_peak", False)):
-        read_ids = peak_subsets.get(alias, [])
-        if len(read_ids) < kw["min_child_reads"] * 2:
-            continue
-
-        peak_dir = os.path.join(work_dir, f"amplici_{alias}")
-        os.makedirs(peak_dir, exist_ok=True)
-        fq = os.path.join(peak_dir, "reads.fastq")
-        n, n_short, n_ambig = _pad_reads_to_equal_length(
-            reads_df, read_ids, fq, length_pct=length_pct
-        )
-        if n < kw["min_child_reads"] * 2:
-            logger.info(
-                "[haplotype_split] AmpliCI skipping %s: only %d of %d reads survived "
-                "the equal-length requirement.", alias, n, len(read_ids),
-            )
-            continue
-        logger.info(
-            "[haplotype_split] AmpliCI on %s (%d reads kept, %d too short, %d "
-            "ambiguous; indel_rate=%g abundance=%g ll_floor=%g)",
-            alias, n, n_short, n_ambig, indel_rate, abundance, log_likelihood,
-        )
-
-        base = os.path.join(peak_dir, "out")
-        cmd = [binary, "--fastq", fq, "--outfile", base,
-               "--abundance", str(abundance), "--indel", str(indel_rate),
-               "--log_likelihood", str(log_likelihood)]
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        # AmpliCI returns a non-zero exit code even on a successful run and logs
-        # everything, including ordinary progress, to stderr at INFO level. The
-        # only reliable success signal is that it wrote its result file.
-        out_file = base + ".out" if os.path.exists(base + ".out") else base
-        if not os.path.exists(out_file):
-            raise RuntimeError(
-                f"run_AmpliCI produced no result file for peak {alias} "
-                f"(exit {res.returncode}): {res.stderr.decode()[-2000:]}"
-            )
-
-        mapping = _parse_amplici_assignments(base, fq)
-        if mapping:
-            assignments[alias] = mapping
-        else:
-            logger.warning(
-                "[haplotype_split] AmpliCI produced no read assignments for %s", alias
-            )
-
-    return assignments_to_result(
-        comps=comps, reads_df=reads_df, peak_subsets=peak_subsets,
-        assignments=assignments,
-        wt_amplicon_length=kw["wt_amplicon_length"],
-        min_child_fraction=kw["min_child_fraction"],
-        min_child_reads=kw["min_child_reads"],
-        wt_peak_tolerance=kw.get("wt_peak_tolerance", 5.0),
-    )
-
-
-def _parse_amplici_assignments(base: str, fastq_path: str) -> Dict[str, str]:
-    """Read AmpliCI's per-read haplotype assignments out of its .out file.
-
-    The file is a key/value text report; the assignment vector is one integer
-    per input read, in input order, under a header naming it. Read ids come back
-    from the FASTQ because AmpliCI reports positions, not names.
-    """
-    out_file = base if os.path.exists(base) else base + ".out"
-    if not os.path.exists(out_file):
-        return {}
-
-    ids: List[str] = []
-    with open(fastq_path) as fh:
-        for i, line in enumerate(fh):
-            if i % 4 == 0:
-                ids.append(line[1:].strip().split()[0])
-
-    text = open(out_file).read()
-    values: List[str] = []
-    capture = False
-    for line in text.splitlines():
-        stripped = line.strip()
-        low = stripped.lower()
-        if low.startswith("assignments:") or low.startswith("cluster assignments:"):
-            capture = True
-            rest = stripped.split(":", 1)[1].strip()
-            if rest:
-                values.extend(rest.split())
-            continue
-        if capture:
-            if not stripped or ":" in stripped:
-                break
-            values.extend(stripped.split())
-
-    if len(values) < len(ids):
-        return {}
-    return {
-        rid: f"H{val}" for rid, val in zip(ids, values[:len(ids)])
-        if val.lstrip("-").isdigit() and int(val) >= 0
-    }
-
-
 BACKENDS: Dict[str, Callable[..., PeakRefineResult]] = {
     "none": _backend_none,
-    "gmm2pass": _backend_gmm2pass,
-    "isonclust": _backend_isonclust,
     "dada2": _backend_dada2,
-    "amplici": _backend_amplici,
 }
 
 
@@ -624,40 +371,12 @@ def split_peaks(
     wt_peak_tolerance: float = 5.0,
     min_child_fraction: float = 0.15,
     min_child_reads: int = 20,
-    gmm_kwargs: Optional[dict] = None,
     tool_kwargs: Optional[dict] = None,
 ) -> PeakRefineResult:
     """Split GMM peaks into haplotypes using the named method."""
-    # "gmm2pass+dada2" applies methods in order: length first, then sequence.
-    if "+" in method:
-        stages = [m.strip() for m in method.split("+") if m.strip()]
-        result = PeakRefineResult(comps=comps, reads_df=reads_df,
-                                  peak_subsets=peak_subsets)
-        for n, stage in enumerate(stages, start=1):
-            logger.info("[haplotype_split] chained stage %d/%d: %s",
-                        n, len(stages), stage)
-            result = split_peaks(
-                stage,
-                comps=result.comps,
-                reads_df=result.reads_df,
-                peak_subsets=result.peak_subsets,
-                wt_amplicon_length=wt_amplicon_length,
-                threads=threads,
-                work_dir=(os.path.join(work_dir, f"stage{n}_{stage}")
-                          if work_dir else None),
-                cluster_wt_peak=cluster_wt_peak,
-                wt_peak_tolerance=wt_peak_tolerance,
-                min_child_fraction=min_child_fraction,
-                min_child_reads=min_child_reads,
-                gmm_kwargs=gmm_kwargs,
-                tool_kwargs=tool_kwargs,
-            )
-        return result
-
     if method not in BACKENDS:
         raise ValueError(
             f"Unknown haplotype method {method!r}; available: {sorted(BACKENDS)} "
-            f"(or several joined with '+', e.g. gmm2pass+dada2)"
         )
     if comps.empty or reads_df.empty:
         return PeakRefineResult(comps=comps, reads_df=reads_df, peak_subsets=peak_subsets)
@@ -681,7 +400,6 @@ def split_peaks(
             wt_peak_tolerance=wt_peak_tolerance,
             min_child_fraction=min_child_fraction,
             min_child_reads=min_child_reads,
-            gmm_kwargs=gmm_kwargs,
             tool_kwargs=tool_kwargs,
         )
     finally:

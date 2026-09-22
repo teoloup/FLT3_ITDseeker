@@ -117,7 +117,7 @@ BAM
  ├─ 4. split peaks into haplotypes    per-peak sequence clustering (DADA2)
  ├─ 5. extract insertions per peak    pairwise align each read to WT,
  │                                      read the inserted bases out
- ├─ 6. build a consensus per peak     weighted MSA over unique insertions
+ ├─ 6. build a consensus per peak     weighted MSA over contextual alleles
  ├─ 7. build one reference per ITD    WT with that consensus inserted
  ├─ 8. competitive validation         align every read against WT + all ITD
  │                                      references; each read votes once
@@ -153,9 +153,9 @@ Sample 13697 from the validation set. Fragment analysis confirms three ITDs of
 two further peaks. The 24 bp and 30 bp ITDs are close enough in length that they
 land in a single peak.
 
-**Step 4 — splitting.** The length-based second pass tests that peak for
-substructure and separates it into a 24 bp and a 30 bp component, because their
-lengths genuinely differ.
+**Step 4 - splitting.** DADA2 clusters reads by sequence within each initial
+length peak. The example below was produced by the earlier length-refinement
+implementation; its intermediate aliases and counts are historical.
 
 **Steps 5–6 — insertions and consensus.** Each peak's reads are aligned to the
 wild-type reference and the inserted bases extracted. For the 24 bp peak:
@@ -165,8 +165,8 @@ ITD_1_S1   len=24   n=531 reads   531 unique   0 N
            TCATATTCTCTGAAATCAACGTAG
 ```
 
-Zero `N` is the signal that every read behind this peak agrees. If two different
-ITDs had been mixed here, the disagreeing columns would come out as `N`.
+A consensus without `N` has a dominant base at each retained column; it does
+not prove that every read agrees or that no minor haplotype is present.
 
 **Step 8 — validation.** Four references now exist: WT, 24 bp, 72 bp, 30 bp.
 Every read is aligned against all four.
@@ -215,19 +215,15 @@ fit read lengths  ->  peaks
    all candidates ->  insertions, consensus, references, validation, VCF
 ```
 
-Two ITDs of the same length land in one length peak, and DADA2 separates them
-there because it is looking at the sequences. Everything downstream is unchanged:
-each cluster becomes a candidate ITD and is validated on the same footing as any
-other.
+DADA2 attempts to separate same-length haplotypes using sequence evidence.
+Separation is not guaranteed: the current mixed synthetic challenge still misses
+the three 45 bp haplotypes. Unresolved consensuses are skipped with a warning;
+they are not emitted as sequence-resolved variants. All five supplied test BAMs
+retain their calls after the context-aware consensus change. See
+[the current validation report](review/CONSENSUS_VALIDATION.md).
 
-On simulated data with three 45 bp ITDs sharing a peak this recovers two of them
-plus the length-separable 30 bp one; the length-based pass recovered one. On all
-five real validation samples, where the ITDs differ in size, it reproduces the
-length-based result exactly.
-
-**`--haplotype-method` selects the clustering step** if you want to compare:
-`dada2` (default), `isonclust`, `amplici`, `gmm2pass` (the older length-based
-split), `none`, or a chain like `gmm2pass+dada2`.
+`--haplotype-method` accepts `dada2` (default) or `none` to disable splitting.
+DADA2 is the only supported ASV backend. The initial length GMM remains in use.
 
 ### Unbalanced mixtures leave no N
 
@@ -249,22 +245,15 @@ disagreeing with the base called there, as a check that clustering worked:
 A value above ~0.15 in the output means a peak still looks mixed after
 clustering, and those calls should be treated as provisional.
 
-### Why dada2 and not the others
+### External command records
 
-Three clustering backends are available. Measured against the validation set:
-
-| method | 11531 (1 ITD) | 13697 (3 ITDs) | 14219 (2 ITDs) |
-|---|---|---|---|
-| `dada2` (default) | 1 ✓ | 3 ✓ | 2 ✓ |
-| `gmm2pass` | 1 ✓ | 3 ✓ | 2 ✓ |
-| `isonclust` | 1 ✓ | **2** ✗ | 2 ✓ |
-| `amplici` | 1 ✓ | **2** ✗ | **1** ✗ |
-
-`dada2` is the default because it is the only backend that matches the
-length-based baseline everywhere while still separating same-length ITDs. `isonclust` merged the
-30 bp ITD into the 24 bp peak; `amplici` fragmented real ITDs, in one case
-splitting a 37%-AF ITD in two and then losing the call entirely. Neither is safe
-to invoke automatically, though both remain available via `--haplotype-method`.
+Each run appends exact samtools, Cutadapt and DADA2 Rscript invocations to
+`<sample>_commands.jsonl` in the output root, outside intermediate directories.
+The JSON records preserve argument boundaries, resolved executable, working
+directory, timestamp, and stream routing. INFO logs show POSIX-quoted commands.
+These record attempted process launches; check the run log for success or failure.
+Historical backend comparisons remain in `benchmarks/`, but their removed
+backend commands are not supported by this version.
 
 ---
 
@@ -278,7 +267,7 @@ results/
     ├── SAMPLE_itd_gmm_fit_plot.png         read lengths and fitted peaks
     ├── SAMPLE_itd_size_distribution.png    insertion sizes across reads
     ├── SAMPLE_itd_insertions.tsv           per-read insertion evidence
-    ├── SAMPLE_itd_consensus_seq.tsv        per-peak consensus (check N here)
+    ├── SAMPLE_itd_consensus_seq.tsv        accepted per-peak consensus
     ├── SAMPLE_validation_refs.fasta        the references reads were tested against
     ├── SAMPLE_validation_read_support.tsv  per-read assignment and scores
     └── SAMPLE_<ITD>_*.png                  per-ITD plots
@@ -331,10 +320,10 @@ normalise first (`bcftools norm`) or compare modulo the ITD length.
   three-fold skew before a strand artefact is plausible. The report flags bias
   only when both a significant p and a three-fold odds skew are present, or when
   the variant is seen on essentially one strand.
-- **`N` count in `*_itd_consensus_seq.tsv`.** Anything above zero means the reads
-  behind that peak disagree. Clustering normally resolves this; if `N`s survive
-  it, the peak may hold two ITDs the tool could not separate, and the call should
-  be treated as provisional.
+- **Unresolved-consensus warnings and MSA plots.** Candidates containing
+  ambiguous bases are skipped before validation. Inspect the warnings and the
+  per-peak MSA plots to identify mixed or poorly supported peaks. A clean
+  consensus can still hide a lower-frequency haplotype.
 
 ### The read-length plot
 
@@ -382,11 +371,10 @@ in `Nano_ITDseeker.py` with them.
 
 ## 8. Known limits
 
-- **ITDs identical in both length and position**, differing only by substituted
-  bases, are not separated. Only `amplici` resolved this in simulation, and it
-  is too aggressive on real data to use by default.
-  This pattern is biologically uncommon — co-occurring ITDs usually differ in
-  size or breakpoint — but a surviving `N` in the consensus is the sign of it.
+- **Same-length haplotypes may remain unresolved**, including haplotypes that
+  differ only by substitutions. Ambiguous consensus sequences are rejected;
+  an unbalanced mixture can still produce a clean majority consensus and hide
+  a minor haplotype. Missing candidates can bias reported allele frequencies.
 - **Detection depends on read-length clustering.** An ITD whose reads do not form
   a distinct length peak, or that falls below `--min-gmm-fraction` (default 1%),
   will not be proposed and therefore cannot be validated. Reads assigned to the
@@ -434,7 +422,7 @@ python Nano_ITDseeker.py -b sim_data/sim_A.bam -o sim_out -s simA \
 
 # score the calls against the truth tables
 python evaluate_haplotypes.py --run-dir sim_out --sample simA \
-    --truth-dir sim_data --scenario A --method gmm2pass
+    --truth-dir sim_data --scenario A --method dada2
 ```
 
 `simulate_itd_data.py` models the error profile measured from the negative
