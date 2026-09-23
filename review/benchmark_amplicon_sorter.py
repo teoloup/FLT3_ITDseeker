@@ -26,6 +26,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--sample', required=True, choices=['sim_A', 'sim_no_wt', '13697_2runs_hg38_RG', '14417_2runs_hg38_RG'])
     parser.add_argument('--profile', choices=['default', 'sc99', 'sc995'], default='default')
+    parser.add_argument('--length-diff-consensus', type=float, default=None)
+    parser.add_argument('--replicate', type=int, default=1)
     parser.add_argument('--maxreads', type=int, default=100000)
     parser.add_argument('--native', action='store_true', help='Use native Linux temp storage for upstream intermediate files')
     parser.add_argument('--diagnostic', action='store_true', help='Expose upstream swallowed exceptions; no clustering changes')
@@ -58,6 +60,8 @@ def main():
     if args.diagnostic: label += '__diagnostic'
     if args.native: label += '__native'
     if args.maxreads != 100000: label += '__cap' + str(args.maxreads)
+    if args.length_diff_consensus is not None: label += '__ldc' + format(args.length_diff_consensus, 'g')
+    if args.replicate != 1: label += '__rep' + str(args.replicate)
     out = base / args.sample / label
     out.mkdir(parents=True, exist_ok=True)
     if (out / 'summary.json').exists():
@@ -76,6 +80,8 @@ def main():
            '--minlength', '330', '--maxlength', '666', '--save_fastq', '-o', str(work_out)]
     if args.profile != 'default':
         cmd += ['--similar_consensus', '99' if args.profile == 'sc99' else '99.5']
+    if args.length_diff_consensus is not None:
+        cmd += ['--length_diff_consensus', str(args.length_diff_consensus)]
     record_command(cmd, stdin='inherited', stdout=str(out / 'console.log'), stderr='merged-with-stdout')
     start = time.monotonic()
     with (out / 'console.log').open('w') as handle:
@@ -122,6 +128,7 @@ def main():
     selection = re.search(r'(\d+) out of (\d+) sequences', (out / 'console.log').read_text())
     selected = int(selection.group(1)) if selection else None
     row = dict(sample=args.sample, profile=args.profile, peak=args.peak, native=args.native, maxreads=args.maxreads, exit_code=code,
+               length_diff_consensus=args.length_diff_consensus, replicate=args.replicate,
                selected_reads=selected,
                unassigned_selected_reads=selected-len(assigned) if selected is not None else None,
                completed=completed, remaining_groups=[str(p.relative_to(out)) for p in remaining_groups],

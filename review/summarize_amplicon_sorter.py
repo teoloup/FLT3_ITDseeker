@@ -22,7 +22,7 @@ for p in sorted(BASE.rglob('summary.json')):
     folder=p.parent
     remaining=list(folder.rglob('*.group'))
     complete=row.get('completed',row['exit_code']==0 and not remaining and bool(list(folder.rglob('*_consensussequences.fasta'))))
-    result={k:row.get(k) for k in ['sample','profile','peak','native','maxreads','exit_code','seconds','input_reads','assigned_reads','unassigned_reads','duplicate_assignments','unknown_ids']}
+    result={k:row.get(k) for k in ['sample','profile','peak','native','maxreads','length_diff_consensus','replicate','exit_code','seconds','input_reads','assigned_reads','unassigned_reads','duplicate_assignments','unknown_ids']}
     selection=re.search(r'(\d+) out of (\d+) sequences',(folder/'console.log').read_text())
     result['selected_reads']=int(selection.group(1)) if selection else None
     result.update(run=str(folder.relative_to(BASE)),completed=complete,clusters=[])

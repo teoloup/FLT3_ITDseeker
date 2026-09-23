@@ -176,9 +176,76 @@ same input instead completed with two 1,000-read clusters having identical
 exact consensuses. This is another reason to use native scratch storage and
 collapse identical reconstructed alleles before reporting.
 
-All six native-storage experiments completed; none contained duplicate read
+All six initial native-storage experiments completed; none contained duplicate read
 assignments or unknown read IDs. The exact replay alleles were independently
 verified by reconstructing full alleles from VCF anchors and comparing with the
 simulation truth, rather than accepting approximate lengths or sequence rotations.
 
 No production code, default backend, or production dependency was changed.
+
+## Follow-up: why the 72 bp insertion split
+
+Read-level diagnosis and parameter tests are now complete. The 405 bp consensus
+is exactly the 408 bp consensus with its first three bases (`TTG`) removed:
+
+```text
+408 bp: TTGTACCTTTCAGCATTTTGACG...
+405 bp:    TACCTTTCAGCATTTTGACG...
+```
+
+The ITD sequence and all remaining bases are identical. Using the upstream
+comparison function, the two drafts have 99.3% global identity and 100%
+semi-global identity (`HW`, the mode used for consensus merging). They therefore
+already pass 99% AND 99.5% consensus merging thresholds. The split is not justified
+as two different ITDs by these results.
+
+Both groups contain reads with both primer-end patterns. Among reads with the
+exact short `TACCTTTCAGCA` prefix, all 128 in the first group and all 108 in the
+second already start there in the sequences extracted from the supplied BAM.
+The current Cutadapt step did not create this truncation. Because the BAM was
+built from previously trimmed FASTQs, this does NOT establish whether upstream
+trimming or sequencing caused those endpoints. The groups also differ strongly
+in read orientation and input batches: the first contains batches 0, 6 and 7;
+the second contains batches 1-5. This is inconsistent with two cleanly separated
+insertion alleles and supports an early grouping/read-end effect.
+
+The tool first creates broad gene groups, then processes each separately.
+These clusters came from DIFFERENT gene groups (`trimmed_0` and `trimmed_1`),
+so the later `--similar_consensus` step never directly compares them. The early
+`--length_diff_consensus` gate defaults to 8%. It can retain separate broad groups
+when their representative consensuses have different amplicon lengths. Native
+whole-sample tests widening that gate support this explanation; the precise
+intermediate random draft choices were not retained, so that part of the causal
+chain is inferred from code, logs and the perturbation test.
+
+| Experiment | Reads selected | Result | Seconds |
+|---|---:|---|---:|
+| Whole sample, 99%, default length gate | 7,690 | 24, 30, and two clusters with identical 72 bp insertions | 347 |
+| Whole sample, 99%, `--length_diff_consensus 25` | 7,690 | One cluster per 24, 30 and 72 bp insertion | 247 |
+| GMM 72 bp peak, 99%, run 1 | 589 | One 72 bp cluster, all 589 reads | 84 |
+| GMM 72 bp peak, 99%, run 2 | 589 | One 72 bp cluster, all 589 reads | 84 |
+| GMM 72 bp peak, 99.5% | 589 | One 72 bp cluster, all 589 reads | 84 |
+| Mixed synthetic sample, 99%, length gate 25 | 1,999 | WT, A+D, B, C, unchanged from the earlier 99% result | 71 |
+
+The wider-gate real run assigned 7,673 reads: 6,027 WT-like, 664 with 24 bp,
+317 with 30 bp, and 665 with 72 bp; 17 were unassigned. This is not the same
+population as the 589-read GMM-selected peak, so their counts are not directly
+interchangeable. These remain clustering tests, not new validated VCF runs.
+
+Recommendation: keep per-peak clustering, which removed this duplication in
+three runs without relaxing global merging. `--length_diff_consensus 25` is a
+useful tested whole-sample alternative here, not a universal setting: it affects
+early broad grouping and also late comparisons, and the code uses a permissive
+80% early identity check when this setting exceeds 8%. Preserve distinct ITDs
+and deduplicate only equivalent reconstructed insertion alleles.
+
+Evidence: `runs/amplicon_sorter/72bp_split_diagnosis.json`, individual run logs,
+and `diagnose_72bp_split.py`. To reproduce the parameter perturbation:
+
+```bash
+python review/benchmark_amplicon_sorter.py --sample 13697_2runs_hg38_RG --profile sc99 --native --length-diff-consensus 25
+python review/benchmark_amplicon_sorter.py --sample 13697_2runs_hg38_RG --profile sc99 --peak ITD_2 --native
+python review/benchmark_amplicon_sorter.py --sample 13697_2runs_hg38_RG --profile sc99 --peak ITD_2 --native --replicate 2
+python review/benchmark_amplicon_sorter.py --sample 13697_2runs_hg38_RG --profile sc995 --peak ITD_2 --native
+python review/benchmark_amplicon_sorter.py --sample sim_A --profile sc99 --native --length-diff-consensus 25
+```
