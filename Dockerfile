@@ -10,6 +10,10 @@
 
 FROM python:3.10-slim-bookworm
 
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.source="https://github.com/teoloup/FLT3_ITDseeker" \
+      org.opencontainers.image.revision=$VCS_REF
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     MPLBACKEND=Agg
@@ -41,6 +45,10 @@ RUN curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest \
     && micromamba clean -y --all
 
 COPY *.py dada2_cluster.R ./
+
+# Also support `apptainer exec image.sif Nano_ITDseeker ...`.
+RUN printf '#!/bin/sh\nexec python /opt/itdseeker/Nano_ITDseeker.py "$@"\n' > /usr/local/bin/Nano_ITDseeker \
+    && chmod +x /usr/local/bin/Nano_ITDseeker
 
 # Fail the build rather than ship an image whose backends are silently missing.
 RUN samtools --version | head -1 \
