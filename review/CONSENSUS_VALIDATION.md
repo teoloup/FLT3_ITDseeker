@@ -112,3 +112,13 @@ position, AF 41.209%, and depth 13531. The audit contained respectively 5, 4,
 and 4 external invocations, including the expected DADA2 arguments and four
 threads. All three audit files remained after the pipeline deleted its temp
 folder. The checked summary is `runs/final_dada2_summary.json`.
+
+## Medaka follow-up (2026-09-23)
+
+Five matched-read polishing runs with the user-confirmed SUP v5.0.0 model
+completed. All drafts were unchanged: the real 72 bp ITD and synthetic 60 bp
+allele were preserved, while terminal differences between real drafts remained.
+Inference and coverage were verified independently. These cases demonstrate
+compatibility with either draft source, but no accuracy improvement. See
+[MEDAKA_EVALUATION.md](MEDAKA_EVALUATION.md) for commands, coverage, timings and
+limitations. Production consensus behavior remains unchanged.
