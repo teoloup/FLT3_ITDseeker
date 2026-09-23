@@ -1,13 +1,12 @@
 # Docker test image, 2026-09-23
 
-Built and validated locally: `teoloup/hematology-aml-flt3-itd:asv-fixes-20260923`
-(linux/amd64). Publication is pending: Docker Hub rejected the push with
-`insufficient_scope: authorization failed`. A Docker login with repository write
-access is required. The tag is not yet available for remote testing.
+Built, validated and published: `teoloup/hematology-aml-flt3-itd:asv-fixes-20260923`
+(linux/amd64). After the user logged in, the push retry succeeded. A separate
+`docker buildx imagetools inspect` request confirmed the published tag and digest.
 
-Local manifest digest:
+Published manifest digest:
 `sha256:d9ec387724d0f44045919dadcdd888107becc6b8f8107807f383d96f073bac5e`.
-This is a local identity, not confirmation that the registry serves that digest.
+The published digest matches the locally validated image.
 Runtime Python/R sources are from `d8540b6`; Docker packaging and targeted GMM
 regressions were committed in `e6f4381`. No main merge is needed to test this image.
 
@@ -67,9 +66,10 @@ docker push teoloup/hematology-aml-flt3-itd:asv-fixes-20260923
 The test runner records Docker argv in `runs/docker_20260923/docker_commands.jsonl`.
 Build/push logs, dependency listing, unit-test output, per-sample outputs and
 `checked_results.json` are in that same directory. Pipeline command audits are
-in each sample output folder. The failed push log is retained there.
+in each sample output folder. The failed push log and successful `push_retry.log`
+are retained there.
 
-After publication, the user's test command can be run as:
+The user's test command can now be run as:
 
 ```bash
 apptainer exec \
