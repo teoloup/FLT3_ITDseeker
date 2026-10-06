@@ -332,12 +332,13 @@ ITD — competitive validation and the allele-frequency filter both sit downstre
 and either can discard one. Peaks that did not survive are drawn dotted and grey
 and labelled **not reported**, so the plot and the VCF agree.
 
-Sample 11531 is the worked case: the length-based second pass split one peak into
-components 3.18 bp apart, the smaller produced a 123 bp consensus against its own
-expected 190.9 bp, and competitive validation gave it zero reads. It appears on
-the plot, correctly marked, and not in the VCF. A discarded peak is usually a
-spurious split rather than a missed ITD, but it is worth a look when it carries
-many reads.
+Sample 11531 showed this under the earlier length-based second pass, which has
+since been replaced by DADA2. That pass split one peak into components 3.18 bp
+apart. The smaller one produced a 123 bp consensus against its own expected
+190.9 bp, and competitive validation gave it zero reads. It appeared on the plot,
+correctly marked, and not in the VCF. The same applies to a DADA2 haplotype: a
+discarded peak or haplotype is usually a spurious split rather than a missed
+ITD, but it is worth a look when it carries many reads.
 
 ### The HTML report
 

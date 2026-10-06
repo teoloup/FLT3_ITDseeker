@@ -97,7 +97,7 @@ if __name__ == "__main__":
         "--min-gmm-peak-distance", type=int, default=10, help="Minimum distance between GMM peaks (default: 10).",
     )
     parser.add_argument(
-        "--disable-subpeak-refinement", action="store_true", help="Disable one-level local refinement of each initial ITD peak."
+        "--disable-subpeak-refinement", action="store_true", help="Disable haplotype splitting of the GMM peaks; same as --haplotype-method none, and overrides it."
     )
     parser.add_argument(
         "--haplotype-method", choices=sorted(BACKENDS), default="dada2",
@@ -124,7 +124,7 @@ if __name__ == "__main__":
         help="DADA2 HOMOPOLYMER_GAP_PENALTY, softening gaps where ONT errors concentrate (default: -1.0).",
     )
     parser.add_argument(
-        "--min-subpeak-fraction", type=float, default=0.15, help="Minimum fraction per child subpeak when splitting a parent peak (default: 0.15)."
+        "--min-subpeak-fraction", type=float, default=0.15, help="Minimum fraction of the parent peak for a sequence cluster to become its own haplotype (default: 0.15)."
     )
     parser.add_argument(
         "--msa-max-unique", type=int, default=150, help="Maximum unique insertion sequences used per peak for MSA consensus (default: 150)."
