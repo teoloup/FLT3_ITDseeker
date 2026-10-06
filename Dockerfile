@@ -20,6 +20,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         samtools \
+        procps \
         build-essential \
         zlib1g-dev libbz2-dev liblzma-dev libcurl4-openssl-dev libssl-dev \
         git curl bzip2 ca-certificates \
