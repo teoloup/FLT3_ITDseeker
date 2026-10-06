@@ -10,7 +10,7 @@ import sys
 from Bio import SeqIO
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
-import haplotype_split
+from itdseeker import haplotype_split
 
 def replay(**kw):
     folder=ROOT/'review/runs/amplicon_sorter/sim_A/sc995__ITD_2__native'

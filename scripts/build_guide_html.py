@@ -7,12 +7,16 @@ markdown. No external dependency: this handles the subset of markdown GUIDE.md
 actually uses -- headings, tables, fenced code, lists, inline code, bold, links,
 horizontal rules -- rather than pulling in a full parser.
 
-Usage:  python build_guide_html.py [in.md] [out.html]
+Usage:  python scripts/build_guide_html.py [in.md] [out.html]
+        (defaults: docs/GUIDE.md -> docs/GUIDE.html)
 """
 
 import html
+import os
 import re
 import sys
+
+DOCS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "docs")
 
 
 def inline(text):
@@ -205,8 +209,8 @@ strong { font-weight:650; }
 
 
 def main():
-    src = sys.argv[1] if len(sys.argv) > 1 else "GUIDE.md"
-    dst = sys.argv[2] if len(sys.argv) > 2 else "GUIDE.html"
+    src = sys.argv[1] if len(sys.argv) > 1 else os.path.join(DOCS_DIR, "GUIDE.md")
+    dst = sys.argv[2] if len(sys.argv) > 2 else os.path.join(DOCS_DIR, "GUIDE.html")
     md = open(src, encoding="utf-8").read()
 
     # the H1 becomes the page title; the markdown's own Contents list is dropped

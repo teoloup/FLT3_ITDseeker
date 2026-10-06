@@ -4,7 +4,7 @@ BAM Read Extractor Module
 Extracts reads mapping to FLT3 region and performs primer trimming
 """
 
-from command_audit import record_command
+from .command_audit import record_command
 
 import logging
 import pysam

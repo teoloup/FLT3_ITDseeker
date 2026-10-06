@@ -14,7 +14,21 @@
 8. Validate reads by competitive alignment against WT + ITD refs.
 9. Compute AF + strand-bias and export VCF (+ optional HTML report).
 
-See `ALGORITHM_LOGIC.md` for how each step works.
+See `docs/ALGORITHM_LOGIC.md` for how each step works, and `docs/GUIDE.md`
+(rendered as `docs/GUIDE.html`) for a user guide with worked examples.
+
+## Repository Layout
+
+```
+Nano_ITDseeker.py   command-line entry point
+itdseeker/          pipeline modules, plus dada2_cluster.R (the DADA2 wrapper)
+docker/             Dockerfile; build with the repository root as context
+docs/               ALGORITHM_LOGIC.md, GUIDE.md and the generated GUIDE.html
+scripts/            simulate_itd_data.py, evaluate_haplotypes.py, build_guide_html.py
+tests/              regression tests
+benchmarks/         measurements behind the defaults
+review/             validation records
+```
 
 ## Haplotype Splitting With DADA2
 
@@ -163,10 +177,11 @@ unless `--log-level DEBUG` is set.
 
 ## Install
 
-See `requirements.txt`, or use the provided `Dockerfile`:
+See `requirements.txt`, or use the provided `docker/Dockerfile`. Build from the
+repository root, which is the build context:
 
 ```bash
-docker build -t nano-itdseeker .
+docker build -f docker/Dockerfile -t nano-itdseeker .
 docker run --rm -v "$PWD":/data nano-itdseeker \
     -b /data/sample.bam -o /data/out -s SAMPLE -g hg38 -t 8 --html-report
 ```
@@ -217,7 +232,7 @@ POSIX-quoted display command, and stdin/stdout/stderr routing. Execution uses
 `shell=False`; the argument vector is authoritative. The two samtools records
 identify their pipe connection and FASTQ destination. Rscript arguments record
 the wrapper, input/output paths, OMEGA_A, band size, homopolymer penalty, minimum
-ASV reads, and threads, in that order; `dada2_cluster.R` contains the R calls.
+ASV reads, and threads, in that order; `itdseeker/dada2_cluster.R` contains the R calls.
 Logs append across reruns and survive intermediate-file cleanup. They record
 attempted invocations, not successful completion or tool-version provenance.
 Replaying a DADA2 call requires its intermediate FASTQ to still exist.

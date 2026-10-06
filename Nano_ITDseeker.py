@@ -11,14 +11,14 @@ import traceback
 from pathlib import Path
 from Bio.Seq import Seq
 
-from command_audit import configure_command_log
-from bam_extractor import extract_flt3_reads
-from GMM_peaks import fit_gmm_itds, plot_gmm_itds
-from haplotype_split import BACKENDS, split_peaks
-from Pairwise_aligment_toolkit import align_reads_multi_ref_parallel
-from Write_output import export_itd_vcf, generate_itd_html_report, call_no_itd
-from Helper_functions import extract_itd_insertions_from_subset_parallel, plot_itd_size_distribution, plot_itd_read_pileup, build_itd_reference_per_peak, make_validation_refs, prepare_validation_reads, calculate_allele_frequencies_and_strand_bias
-from Multiple_seq_aligment_toolkit import build_itd_consensus_sequences
+from itdseeker.command_audit import configure_command_log
+from itdseeker.bam_extractor import extract_flt3_reads
+from itdseeker.GMM_peaks import fit_gmm_itds, plot_gmm_itds
+from itdseeker.haplotype_split import BACKENDS, split_peaks
+from itdseeker.Pairwise_aligment_toolkit import align_reads_multi_ref_parallel
+from itdseeker.Write_output import export_itd_vcf, generate_itd_html_report, call_no_itd
+from itdseeker.Helper_functions import extract_itd_insertions_from_subset_parallel, plot_itd_size_distribution, plot_itd_read_pileup, build_itd_reference_per_peak, make_validation_refs, prepare_validation_reads, calculate_allele_frequencies_and_strand_bias
+from itdseeker.Multiple_seq_aligment_toolkit import build_itd_consensus_sequences
 
 def install_unhandled_exception_logger():
     """

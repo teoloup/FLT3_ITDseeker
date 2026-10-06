@@ -9,8 +9,8 @@ import pandas as pd
 
 AVAILABLE = importlib.util.find_spec('pymuscle5') is not None
 if AVAILABLE:
-    from Multiple_seq_aligment_toolkit import build_itd_consensus_sequences
-    from simulate_itd_data import DEFAULT_REF_WT as WT
+    from itdseeker.Multiple_seq_aligment_toolkit import build_itd_consensus_sequences
+    from scripts.simulate_itd_data import DEFAULT_REF_WT as WT
 
 @unittest.skipUnless(AVAILABLE, 'pymuscle5 is required')
 class ContextConsensusTests(unittest.TestCase):

@@ -23,7 +23,7 @@ quality strings are generated consistently with the errors actually injected so
 the quality-aware clusterers receive meaningful input.
 
 Usage:
-    python simulate_itd_data.py --scenario A --out-dir sim_data
+    python scripts/simulate_itd_data.py --scenario A --out-dir sim_data
 """
 
 import argparse

@@ -13,8 +13,8 @@ sys.path.insert(0,str(ROOT))
 from Bio import SeqIO
 from Bio.Seq import Seq
 import edlib
-from Helper_functions import build_default_aligner,find_insertions
-from simulate_itd_data import DEFAULT_REF_WT as WT
+from itdseeker.Helper_functions import build_default_aligner,find_insertions
+from scripts.simulate_itd_data import DEFAULT_REF_WT as WT
 BASE=ROOT/'review/runs/amplicon_sorter'
 rows=[]
 for p in sorted(BASE.rglob('summary.json')):

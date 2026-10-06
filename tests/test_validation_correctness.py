@@ -4,10 +4,10 @@ import unittest
 
 import pandas as pd
 
-from GMM_peaks import fit_gmm_itds, refine_peak_substructure_once
-from Helper_functions import classify_read_support, validate_itd_supporting_reads
-from Pairwise_aligment_toolkit import align_reads_multi_ref_parallel
-from haplotype_split import assignments_to_result
+from itdseeker.GMM_peaks import fit_gmm_itds, refine_peak_substructure_once
+from itdseeker.Helper_functions import classify_read_support, validate_itd_supporting_reads
+from itdseeker.Pairwise_aligment_toolkit import align_reads_multi_ref_parallel
+from itdseeker.haplotype_split import assignments_to_result
 
 WT = (
     "CTGTACCTTTCAGCATTTTGACGGCAACCTGGATTGAGACTCCTGTTTTGCTAATTCCATAAGCTGTTGCG"

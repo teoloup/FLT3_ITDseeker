@@ -64,11 +64,14 @@ Where it stops working is [section 5](#5-the-same-length-problem).
   `pip install git+https://github.com/althonos/pymuscle5` (needs Cython and a C
   toolchain).
 
-The `Dockerfile` does all of this, including the optional haplotype backends,
-and fails the build if any of them is missing:
+- R with the Bioconductor packages `dada2` and `ShortRead`, for haplotype
+  splitting. Set `ITDSEEKER_RSCRIPT` if the system `Rscript` cannot load them.
+
+`docker/Dockerfile` does all of this, including R and DADA2, and fails the build
+if any of them is missing. Build from the repository root:
 
 ```bash
-docker build -t nano-itdseeker .
+docker build -f docker/Dockerfile -t nano-itdseeker .
 docker run --rm -v "$PWD":/data nano-itdseeker \
     -b /data/sample.bam -o /data/out -s SAMPLE -g hg38 -t 8 --html-report
 ```
@@ -220,7 +223,7 @@ Separation is not guaranteed: the current mixed synthetic challenge still misses
 the three 45 bp haplotypes. Unresolved consensuses are skipped with a warning;
 they are not emitted as sequence-resolved variants. All five supplied test BAMs
 retain their calls after the context-aware consensus change. See
-[the current validation report](review/CONSENSUS_VALIDATION.md).
+[the current validation report](../review/CONSENSUS_VALIDATION.md).
 
 `--haplotype-method` accepts `dada2` (default) or `none` to disable splitting.
 DADA2 is the only supported ASV backend. The initial length GMM remains in use.
@@ -353,7 +356,7 @@ Everything is inlined, so the file can be archived or emailed on its own.
 ## 7. Parameters that actually matter
 
 Defaults were chosen against the validation set and the simulator; the
-measurements are in [`benchmarks/`](benchmarks/).
+measurements are in [`benchmarks/`](../benchmarks/).
 
 | option | default | why |
 |---|---|---|
@@ -415,18 +418,18 @@ To regenerate or extend the evidence:
 
 ```bash
 # build a synthetic sample with known haplotypes
-python simulate_itd_data.py --scenario A --reads 8000 --out-dir sim_data
+python scripts/simulate_itd_data.py --scenario A --reads 8000 --out-dir sim_data
 
 # run it
 python Nano_ITDseeker.py -b sim_data/sim_A.bam -o sim_out -s simA \
     -g hg38 -t 8 --min-allele-frequency 0.01
 
 # score the calls against the truth tables
-python evaluate_haplotypes.py --run-dir sim_out --sample simA \
+python scripts/evaluate_haplotypes.py --run-dir sim_out --sample simA \
     --truth-dir sim_data --scenario A --method dada2
 ```
 
-`simulate_itd_data.py` models the error profile measured from the negative
+`scripts/simulate_itd_data.py` models the error profile measured from the negative
 control, and scenario A deliberately includes ITDs that share a length, so it
 exercises the failure mode that motivates per-peak sequence clustering. `evaluate_haplotypes.py`
 reports recovery, over-splitting, allele-frequency error, ambiguous-base counts

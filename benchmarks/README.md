@@ -4,7 +4,7 @@ Measurements behind the non-obvious defaults in this pipeline. Recorded here
 rather than under `test_output/`, which is gitignored, so the evidence for a
 default travels with the code that uses it.
 
-Regenerate any of these with `simulate_itd_data.py` + `evaluate_haplotypes.py`;
+Regenerate any of these with `scripts/simulate_itd_data.py` + `scripts/evaluate_haplotypes.py`;
 the validation BAMs referenced by the real-data tables are not in the repo.
 
 ## Haplotype splitting

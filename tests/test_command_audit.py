@@ -3,8 +3,8 @@ from pathlib import Path
 import shlex
 import tempfile
 import unittest
-from command_audit import configure_command_log, record_command
-from haplotype_split import BACKENDS, split_peaks
+from itdseeker.command_audit import configure_command_log, record_command
+from itdseeker.haplotype_split import BACKENDS, split_peaks
 
 class CommandAuditTests(unittest.TestCase):
     def tearDown(self):

@@ -5,9 +5,9 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 import numpy as np
 import pandas as pd
-import simulate_itd_data as sim
-from Helper_functions import process_chunk
-from Multiple_seq_aligment_toolkit import build_itd_consensus_sequences
+import scripts.simulate_itd_data as sim
+from itdseeker.Helper_functions import process_chunk
+from itdseeker.Multiple_seq_aligment_toolkit import build_itd_consensus_sequences
 
 def case(args):
     pos,scale=args

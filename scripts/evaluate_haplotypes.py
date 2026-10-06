@@ -18,7 +18,7 @@ Two matching subtleties, both real rather than cosmetic:
     rotated, so sequences are compared allowing rotation.
 
 Usage:
-    python evaluate_haplotypes.py --run-dir out/ --sample simA \\
+    python scripts/evaluate_haplotypes.py --run-dir out/ --sample simA \\
         --truth-dir sim_data --scenario A --method dada2
 """
 
