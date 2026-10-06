@@ -2,7 +2,7 @@
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
-import simulate_itd_data as sim
+import scripts.simulate_itd_data as sim
 sim.ERR_MISMATCH=sim.ERR_INSERTION=sim.ERR_DELETION=0.
 sim.SCENARIOS['clean_no_wt']=[sim.Haplotype('ITD60',1.,ins_pos=180,dup_len=60)]
 paths=sim.simulate('clean_no_wt',400,42,str(ROOT/'review'/'synthetic'))

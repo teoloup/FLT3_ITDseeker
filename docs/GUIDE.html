@@ -91,9 +91,13 @@ strong { font-weight:650; }
 <li><code>pymuscle5</code> has no PyPI release; install it from source:</li>
 </ul>
 <p>  <code>pip install git+https://github.com/althonos/pymuscle5</code> (needs Cython and a C   toolchain).</p>
-<p>The <code>Dockerfile</code> does all of this, including the optional haplotype backends, and fails the build if any of them is missing:</p>
+<ul>
+<li>R with the Bioconductor packages <code>dada2</code> and <code>ShortRead</code>, for haplotype</li>
+</ul>
+<p>  splitting. Set <code>ITDSEEKER_RSCRIPT</code> if the system <code>Rscript</code> cannot load them.</p>
+<p><code>docker/Dockerfile</code> does all of this, including R and DADA2, and fails the build if any of them is missing. Build from the repository root:</p>
 <pre class="lang-bash"><code>
-docker build -t nano-itdseeker .
+docker build -f docker/Dockerfile -t nano-itdseeker .
 docker run --rm -v &quot;$PWD&quot;:/data nano-itdseeker \
     -b /data/sample.bam -o /data/out -s SAMPLE -g hg38 -t 8 --html-report
 </code></pre>
@@ -200,7 +204,7 @@ fit read lengths  -&gt;  peaks
                                               -&gt; one candidate ITD per cluster
    all candidates -&gt;  insertions, consensus, references, validation, VCF
 </code></pre>
-<p>DADA2 attempts to separate same-length haplotypes using sequence evidence. Separation is not guaranteed: the current mixed synthetic challenge still misses the three 45 bp haplotypes. Unresolved consensuses are skipped with a warning; they are not emitted as sequence-resolved variants. All five supplied test BAMs retain their calls after the context-aware consensus change. See <a href="review/CONSENSUS_VALIDATION.md">the current validation report</a>.</p>
+<p>DADA2 attempts to separate same-length haplotypes using sequence evidence. Separation is not guaranteed: the current mixed synthetic challenge still misses the three 45 bp haplotypes. Unresolved consensuses are skipped with a warning; they are not emitted as sequence-resolved variants. All five supplied test BAMs retain their calls after the context-aware consensus change. See <a href="../review/CONSENSUS_VALIDATION.md">the current validation report</a>.</p>
 <p><code>--haplotype-method</code> accepts <code>dada2</code> (default) or <code>none</code> to disable splitting. DADA2 is the only supported ASV backend. The initial length GMM remains in use.</p>
 <h3 id="unbalanced-mixtures-leave-no-n">Unbalanced mixtures leave no N</h3>
 <p>An <code>N</code> appears only when no base clears <code>--msa-base-threshold</code> (0.7), which needs the minority to exceed about 30%. <strong>A more lopsided mixture produces no <code>N</code> at all</strong> — at 80/20 the majority base clears the threshold and a minor ITD would be silently absorbed. That is why the split happens unconditionally rather than in response to <code>N</code>s.</p>
@@ -322,7 +326,7 @@ chr13  28034081  ITD_1  C  CCAAACTCTAAATTTTCTCTTGGAAACTCCCATTTGAGATCATATT  .  PA
 <p>One card per ITD, carrying the size, genomic position, allele frequency with its read counts, strand balance with the Fisher test, and the inserted sequence itself (ambiguous bases highlighted). Whether the frame is preserved is shown, since <code>ITD_LEN % 3 != 0</code> means a frameshift rather than an in-frame duplication. Everything is inlined, so the file can be archived or emailed on its own.</p>
 <hr>
 <h2 id="7-parameters-that-actually-matter">7. Parameters that actually matter</h2>
-<p>Defaults were chosen against the validation set and the simulator; the measurements are in <a href="benchmarks/"><code>benchmarks/</code></a>.</p>
+<p>Defaults were chosen against the validation set and the simulator; the measurements are in <a href="../benchmarks/"><code>benchmarks/</code></a>.</p>
 <table><thead><tr>
 <th style="text-align:left">option</th>
 <th style="text-align:left">default</th>
@@ -428,17 +432,17 @@ chr13  28034081  ITD_1  C  CCAAACTCTAAATTTTCTCTTGGAAACTCCCATTTGAGATCATATT  .  PA
 <p>To regenerate or extend the evidence:</p>
 <pre class="lang-bash"><code>
 # build a synthetic sample with known haplotypes
-python simulate_itd_data.py --scenario A --reads 8000 --out-dir sim_data
+python scripts/simulate_itd_data.py --scenario A --reads 8000 --out-dir sim_data
 
 # run it
 python Nano_ITDseeker.py -b sim_data/sim_A.bam -o sim_out -s simA \
     -g hg38 -t 8 --min-allele-frequency 0.01
 
 # score the calls against the truth tables
-python evaluate_haplotypes.py --run-dir sim_out --sample simA \
+python scripts/evaluate_haplotypes.py --run-dir sim_out --sample simA \
     --truth-dir sim_data --scenario A --method dada2
 </code></pre>
-<p><code>simulate_itd_data.py</code> models the error profile measured from the negative control, and scenario A deliberately includes ITDs that share a length, so it exercises the failure mode that motivates per-peak sequence clustering. <code>evaluate_haplotypes.py</code> reports recovery, over-splitting, allele-frequency error, ambiguous-base counts and read-level clustering agreement.</p></main>
+<p><code>scripts/simulate_itd_data.py</code> models the error profile measured from the negative control, and scenario A deliberately includes ITDs that share a length, so it exercises the failure mode that motivates per-peak sequence clustering. <code>evaluate_haplotypes.py</code> reports recovery, over-splitting, allele-frequency error, ambiguous-base counts and read-level clustering agreement.</p></main>
 </div>
 </body>
 </html>

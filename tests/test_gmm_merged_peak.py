@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from GMM_peaks import fit_gmm_itds, plot_gmm_itds
+from itdseeker.GMM_peaks import fit_gmm_itds, plot_gmm_itds
 
 
 class MergedPeakTests(unittest.TestCase):

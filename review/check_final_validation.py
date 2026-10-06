@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from simulate_itd_data import DEFAULT_REF_WT as WT
+from scripts.simulate_itd_data import DEFAULT_REF_WT as WT
 
 rows = []
 for sample in ['sim_A', 'sim_no_wt', '10808_hg38_RG']:

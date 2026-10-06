@@ -8,7 +8,7 @@ import pandas as pd
 import logging
 import time
 import pymuscle5
-from Helper_functions import build_default_aligner, find_insertions
+from .Helper_functions import build_default_aligner, find_insertions
 import textwrap
 from typing import Dict, List, Tuple
 from concurrent.futures import ProcessPoolExecutor

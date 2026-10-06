@@ -19,9 +19,9 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from Bio import SeqIO
 import edlib
-from command_audit import configure_command_log,record_command
-from Helper_functions import build_default_aligner,find_insertions
-from simulate_itd_data import DEFAULT_REF_WT as WT
+from itdseeker.command_audit import configure_command_log,record_command
+from itdseeker.Helper_functions import build_default_aligner,find_insertions
+from scripts.simulate_itd_data import DEFAULT_REF_WT as WT
 BASE=ROOT/'review/runs/medaka'
 AS=ROOT/'review/runs/amplicon_sorter'
 

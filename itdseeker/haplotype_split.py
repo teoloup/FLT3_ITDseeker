@@ -16,7 +16,7 @@ trimmed, so each tool sees the kind of input it was built for. Peaks are
 clustered independently.
 """
 
-from command_audit import record_command
+from .command_audit import record_command
 
 import logging
 import os
@@ -28,7 +28,7 @@ from typing import Callable, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from GMM_peaks import PeakRefineResult
+from .GMM_peaks import PeakRefineResult
 
 logger = logging.getLogger(__name__)
 

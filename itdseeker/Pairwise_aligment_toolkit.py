@@ -8,7 +8,7 @@ import logging
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from Bio import Align
-from Helper_functions import (
+from .Helper_functions import (
     percent_identity,
     span_identity,
     set_gap_scores,

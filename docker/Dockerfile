@@ -1,6 +1,7 @@
 # Reproducible environment for Nano_ITDseeker.
 #
-# Build:  docker build -t nano-itdseeker .
+# Build (from the repository root, which is the build context):
+#         docker build -f docker/Dockerfile -t nano-itdseeker .
 # Run:    docker run --rm -v "$PWD":/data nano-itdseeker \
 #             -b /data/sample.bam -o /data/out -s SAMPLE -g hg38 -t 8 --html-report
 #
@@ -45,7 +46,8 @@ RUN curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest \
         bioconductor-dada2 bioconductor-shortread \
     && micromamba clean -y --all
 
-COPY *.py dada2_cluster.R ./
+COPY Nano_ITDseeker.py ./
+COPY itdseeker/ ./itdseeker/
 
 # Also support `apptainer exec image.sif Nano_ITDseeker ...`.
 RUN printf '#!/bin/sh\nexec python /opt/itdseeker/Nano_ITDseeker.py "$@"\n' > /usr/local/bin/Nano_ITDseeker \

@@ -17,9 +17,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from Bio import SeqIO
 import edlib
-from bam_extractor import extract_flt3_reads
-from command_audit import configure_command_log, record_command
-from simulate_itd_data import DEFAULT_REF_WT as WT
+from itdseeker.bam_extractor import extract_flt3_reads
+from itdseeker.command_audit import configure_command_log, record_command
+from scripts.simulate_itd_data import DEFAULT_REF_WT as WT
 
 
 def main():
@@ -44,8 +44,8 @@ def main():
         bam = ROOT / ('review/synthetic' if args.sample.startswith('sim_') else 'bam_data/test_bam') / (args.sample + '.bam')
         extract_flt3_reads(str(bam), 'hg38', 4, 20, 330, 300, 336, str(inputs))
     if args.peak:
-        from GMM_peaks import fit_gmm_itds
-        from haplotype_split import write_peak_fastq
+        from itdseeker.GMM_peaks import fit_gmm_itds
+        from itdseeker.haplotype_split import write_peak_fastq
         reads = {r.id: dict(seq=str(r.seq), strand='+',
                  qual=''.join(chr(q+33) for q in r.letter_annotations['phred_quality']))
                  for r in SeqIO.parse(fq, 'fastq')}

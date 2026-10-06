@@ -1,7 +1,9 @@
 # Only runtime sources and build inputs belong in the image context.
+# The context is the repository root: docker build -f docker/Dockerfile .
 **
-!Dockerfile
+!docker/Dockerfile
 !.dockerignore
 !requirements.txt
-!/*.py
-!dada2_cluster.R
+!Nano_ITDseeker.py
+!itdseeker/
+**/__pycache__

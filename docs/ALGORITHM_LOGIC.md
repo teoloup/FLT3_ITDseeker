@@ -22,7 +22,7 @@ This document explains the core workflow and the statistical/sequence-analysis p
 3. **Per-peak haplotype splitting with DADA2**
    - Read length cannot separate two different ITDs of the same size, so they share one GMM peak. This step splits each peak by sequence.
    - It replaces the earlier second pass, which fitted a local `k=1` vs `k=2` length GMM inside each peak. That pass could only find close but different lengths, and it is no longer used.
-   - Each ITD peak's primer-trimmed reads, with base qualities, are written to FASTQ and passed to `dada2_cluster.R`. The WT peak is included only with `--cluster-wt-peak`.
+   - Each ITD peak's primer-trimmed reads, with base qualities, are written to FASTQ and passed to `itdseeker/dada2_cluster.R`. The WT peak is included only with `--cluster-wt-peak`.
    - Peaks with fewer than `2 x --min-haplotype-reads` reads are not clustered.
    - DADA2 dereplicates the reads, learns an error model from that peak's own reads, and infers amplicon sequence variants (ASVs). Every read is then mapped back to its ASV.
    - Guardrails decide which ASVs become haplotypes:
