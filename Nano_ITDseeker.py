@@ -18,7 +18,7 @@ from itdseeker.haplotype_split import BACKENDS, split_peaks
 from itdseeker.Pairwise_aligment_toolkit import align_reads_multi_ref_parallel
 from itdseeker.Write_output import export_itd_vcf, generate_itd_html_report, call_no_itd
 from itdseeker.Helper_functions import extract_itd_insertions_from_subset_parallel, plot_itd_size_distribution, plot_itd_read_pileup, build_itd_reference_per_peak, make_validation_refs, prepare_validation_reads, calculate_allele_frequencies_and_strand_bias
-from itdseeker.Multiple_seq_aligment_toolkit import build_itd_consensus_sequences
+from itdseeker.Multiple_seq_aligment_toolkit import build_itd_consensus_sequences, MIXED_MINOR_FRACTION
 
 def install_unhandled_exception_logger():
     """
@@ -518,7 +518,7 @@ if __name__ == "__main__":
         "support %.1f%%.",
         n_total, "" if n_total == 1 else "s", 100 * n_worst, 100 * minor_worst,
     )
-    if minor_worst > 0.15 or n_worst > 0.05:
+    if minor_worst > MIXED_MINOR_FRACTION or n_worst > 0.05:
         logger.warning(
             "A consensus still looks mixed after clustering (%.1f%% N, %.1f%% minority "
             "support). Treat those calls as provisional.",

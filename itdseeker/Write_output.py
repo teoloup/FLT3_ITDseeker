@@ -370,7 +370,12 @@ def generate_itd_html_report(
             plots += (f'<figure><figcaption>Position within FLT3</figcaption>'
                       f'<img src="{ref_plot}" alt="{alias} genomic context"></figure>')
         if msa_plot:
-            plots += (f'<figure><figcaption>Consensus support per alignment column</figcaption>'
+            plots += (f'<figure><figcaption>Consensus agreement across the insertion: '
+                      f'bars show the share of reads backing each called base, rows the '
+                      f'most abundant aligned alleles with only their differences printed '
+                      f'(an allele can also differ outside the region shown). A difference '
+                      f'shared by many reads suggests a second haplotype.'
+                      f'</figcaption>'
                       f'<img src="{msa_plot}" alt="{alias} consensus coverage"></figure>')
 
         cards.append(f"""

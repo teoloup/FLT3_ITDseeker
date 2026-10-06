@@ -212,8 +212,26 @@ together instead of aligning rotated insertion payloads in isolation. The insert
 sequence and boundary are then recovered from the same consensus alignment.
 `consensus_ins_pos_ref` is the resulting boundary; `raw_median_ins_pos_ref` preserves
 the original read-position statistic. The legacy `median_ins_pos_ref` column now
-aliases the consensus boundary for compatibility. MSA plots show the full contextual
-allele; the consensus TSV and VCF continue to report the insertion payload.
+aliases the consensus boundary for compatibility. The consensus TSV and VCF
+continue to report the insertion payload.
+
+Only the part of the WT context that varies is aligned. In a tandem repeat, an
+insertion can be written at a run of equivalent positions, and copies of one ITD
+share at least one of them even when sequencing errors are present. The window is
+the narrowest span that reaches such a position for 95% of the reads, plus 30 bp
+of WT on each side. A second ITD at another site in the same peak widens the
+window rather than being dropped. Outside the window every allele carries
+identical WT sequence, so it is added back after alignment rather than sent to
+MUSCLE, whose run time grows with sequence length. The few alleles that cannot
+place their insertion inside the window are left out of the alignment. At the
+real insertion they would only contribute gaps, which do not vote on bases.
+
+The per-ITD consensus plot (`<sample>_<ITD>_MSA_consensus.png`, also in the HTML
+report) shows the insertion with 10 bp of WT each side. Bars give the share of
+reads backing each called base, with the call threshold and the 15% mixed-consensus
+level marked. Below them are the consensus and the most abundant aligned alleles,
+printing only where they differ. A difference shared by many reads suggests a
+second haplotype; scattered single differences are sequencing noise.
 
 The DADA2 backend honors `--threads` for both error learning and denoising.
 

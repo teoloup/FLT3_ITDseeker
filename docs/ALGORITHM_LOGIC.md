@@ -41,10 +41,12 @@ This document explains the core workflow and the statistical/sequence-analysis p
 5. **Per-peak MSA and consensus, in reference context**
    - Each read's insertion is placed back into the WT sequence at that read's insertion boundary, giving a full allele. Isolated insertion payloads can be cyclic rotations of the same duplication; aligning whole alleles keeps those together.
    - Alleles are deduplicated and weighted by abundance. The most abundant ones (up to `--msa-max-unique`, covering `--msa-min-weight-coverage` of reads) are aligned with MUSCLE5.
+   - Only the varying part of each allele is aligned. In a tandem repeat an insertion can be written at a run of equivalent positions, and copies of one ITD share at least one of them even with sequencing errors in the insertion. The window is the narrowest span reaching such a position for 95% of the reads, plus 30 bp on each side, so a second ITD at another site widens it rather than being dropped. Outside it every allele is identical WT, so it is added back after alignment. This cuts MUSCLE's run time, which grows with sequence length. The few alleles that cannot place their insertion in the window are left out; at the real insertion they only carry gaps, which never vote on a base.
    - Weighted consensus is called per alignment column. Low-confidence columns are set to `N` using `--msa-base-threshold` and `--msa-min-col-coverage`.
    - A consensus containing any unresolved base is skipped with a warning, so an ambiguous sequence is never reported as an ITD.
    - Otherwise the consensus allele is realigned to WT. If it contains exactly one insertion within the size bounds, that insertion's sequence and position become the consensus payload and boundary (`consensus_ins_pos_ref`).
    - The largest per-column minority fraction is reported as `max_minor_fraction`. The pipeline warns when a consensus still looks mixed after clustering (`max_minor_fraction` > 0.15 or more than 5% `N`).
+   - A per-ITD plot shows the insertion with 10 bp of WT each side: the per-base agreement, the consensus, and the most abundant aligned alleles with only their differences printed, so a recurrent second haplotype can be told apart from scattered sequencing errors.
 
 6. **ITD reference construction**
    - For each candidate, the consensus insertion is inserted into WT at the consensus boundary.
@@ -166,7 +168,7 @@ Each read is globally aligned to a target reference:
 
 ### 2.6 MSA and weighted consensus
 
-Per peak, alleles (the WT sequence carrying each read's insertion) are aligned together:
+Per peak, alleles (the WT sequence carrying each read's insertion, trimmed to the window described in step 5) are aligned together:
 - Weighted input emphasizes recurrent sequences and reduces influence of single-read noise.
 - Consensus at each column is called by weighted support.
 - Columns with low support/coverage are called as `N`.
