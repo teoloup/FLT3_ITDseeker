@@ -1,0 +1,3 @@
+method	itds_recovered	itds_true	consensus_Ns	peaks_with_Ns	read_ARI	homogeneity	completeness	mean_abs_af_error	mean_abs_af_gmm_error
+gmm2pass	1	4	17	1	0.3075	0.3647	1.0000	0.0705	0.0015
+isonclust	3	4	0	0	0.7635	0.7482	0.9629	0.0587	0.0167

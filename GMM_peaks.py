@@ -34,6 +34,7 @@ def fit_gmm_itds(
     assign_mode,        # "manual", "predict_proba", or "hybrid"
     prob_threshold,
     wt_amplicon_length=336,
+    wt_peak_tolerance=5.0,
     force_k=None,
     reg=1e-3,
     seed=42
@@ -59,12 +60,17 @@ def fit_gmm_itds(
         if isinstance(entry, dict):
             seq = entry.get("seq", "")
             strand = entry.get("strand", "+")
+            # Phred+33 string; may be absent for sequence-only inputs.
+            qual = entry.get("qual", "")
         else:
             # Backward compatibility with older {read_id: seq} format.
             seq = entry
             strand = "+"
-        data.append((rid, seq, strand, len(seq)))
-    df = pd.DataFrame(data, columns=["read_id", "read_seq", "strand", "read_len"])
+            qual = ""
+        data.append((rid, seq, qual, strand, len(seq)))
+    df = pd.DataFrame(
+        data, columns=["read_id", "read_seq", "read_qual", "strand", "read_len"]
+    )
     X = df["read_len"].to_numpy(dtype=float).reshape(-1, 1)
     n = len(X)
 
@@ -236,18 +242,19 @@ def fit_gmm_itds(
     comps["effective_read_count"] = [eff_counts[i] for i in comps.index]
     comps["effective_allele_freq"] = comps["effective_read_count"] / total_eff
 
-    # Give each peak an alias and flag the WT peak as the component whose mean
-    # read length sits closest to the configured WT amplicon length.
-    wt_peak_id = (comps["mean_bp"] - wt_amplicon_length).abs().idxmin()
-
-    #Compute putative ITD size (bp difference relative to WT)
-    comps["putative_itd_size"] = comps["mean_bp"] - comps.loc[wt_peak_id, "mean_bp"]
+    # A sample need not contain WT. Do not relabel an arbitrary ITD as WT.
+    closest = (comps["mean_bp"] - wt_amplicon_length).abs().idxmin()
+    wt_peak_id = (closest if abs(comps.loc[closest, "mean_bp"] - wt_amplicon_length)
+                  <= wt_peak_tolerance else None)
+    wt_mean = (float(comps.loc[wt_peak_id, "mean_bp"]) if wt_peak_id is not None
+               else float(wt_amplicon_length))
+    comps["putative_itd_size"] = comps["mean_bp"] - wt_mean
     comps["is_wt"] = comps.index == wt_peak_id
-    logger.info(
-        "WT peak: mean=%.1f bp (configured WT amplicon length=%d bp, offset=%+.1f bp)",
-        comps.loc[wt_peak_id, "mean_bp"], wt_amplicon_length,
-        comps.loc[wt_peak_id, "mean_bp"] - wt_amplicon_length,
-    )
+    if wt_peak_id is None:
+        logger.info("No WT peak within %.1f bp of %d; using reference length as baseline.",
+                    wt_peak_tolerance, wt_amplicon_length)
+    else:
+        logger.info("WT peak: mean=%.1f bp (expected=%d bp)", wt_mean, wt_amplicon_length)
 
     #Assign aliases before sorting(store in a new column, not the DataFrame index)
     comps["peak_alias"] = [
@@ -315,9 +322,7 @@ def refine_peak_substructure_once(
 
     wt_rows = comps.loc[comps["peak_alias"].str.upper() == "WT"]
     if wt_rows.empty:
-        wt_mean = float(
-            comps.loc[(comps["mean_bp"] - wt_amplicon_length).abs().idxmin(), "mean_bp"]
-        )
+        wt_mean = float(wt_amplicon_length)
     else:
         wt_mean = float(wt_rows.iloc[0]["mean_bp"])
 
@@ -493,6 +498,7 @@ def plot_gmm_itds(
     bins=100,
     out_prefix="gmm_plot",
     title,
+    reported_aliases=None,
     dpi=150
 ):
     """
@@ -512,6 +518,12 @@ def plot_gmm_itds(
         File prefix for saved figure.
     title : str
         Plot title.
+    reported_aliases : set[str] or None
+        Aliases that survived validation and the allele-frequency filter. Peaks
+        outside this set are drawn dimmed and dotted and labelled "not reported",
+        so the plot cannot be read as claiming more ITDs than the VCF contains.
+        None draws every peak as reported, which is correct before validation has
+        run.
     dpi : int
         Image resolution.
     """
@@ -579,20 +591,37 @@ def plot_gmm_itds(
         y = pdf * (n * bin_width) * frac
         mix_curve += y
 
+        # A peak the model fitted is not the same thing as an ITD the pipeline
+        # reported: competitive validation and the allele-frequency filter both
+        # sit downstream, and either can discard a peak. When the caller tells us
+        # which aliases survived, say so on the plot rather than leaving a reader
+        # to wonder why the VCF is shorter than the legend.
+        reported = True if reported_aliases is None else (
+            is_wt or str(alias) in reported_aliases
+        )
+
         # Distinguish WT visually
         color = "black" if is_wt else colors[i]
         lw = 2.5 if is_wt else 2.0
         ls = "-" if is_wt else "--"
+        if not reported:
+            color = "#9aa3ad"
+            lw = 1.4
+            ls = ":"
 
-        ax.plot(xs, y, color=color, lw=lw, ls=ls, alpha=0.9,
+        status = "" if reported or is_wt else "  [not reported]"
+        ax.plot(xs, y, color=color, lw=lw, ls=ls, alpha=0.9 if reported else 0.75,
                 label=f"{alias}: μ={mu:.1f}, σ={sd:.1f}, "
-                      f"model={frac*100:.1f}%, eff={eff_frac*100:.1f}%")
+                      f"model={frac*100:.1f}%, eff={eff_frac*100:.1f}%{status}")
 
         # Annotate with both AFs
         y_max = y.max()
+        note = f"Model AF {frac*100:.1f}%\nFitted AF {eff_frac*100:.1f}%"
+        if not reported:
+            note += "\nnot reported"
         ax.text(
             mu, y_max * 1.05,
-            f"Model AF {frac*100:.1f}%\nFitted AF {eff_frac*100:.1f}%",
+            note,
             ha="center", va="bottom",
             fontsize=8,
             color=color,

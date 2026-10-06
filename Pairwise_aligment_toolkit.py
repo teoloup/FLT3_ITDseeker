@@ -10,6 +10,8 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from Bio import Align
 from Helper_functions import (
     percent_identity,
+    span_identity,
+    set_gap_scores,
     compute_adjusted_score,
     softmax,
     classify_read_support,
@@ -23,16 +25,19 @@ def build_validation_aligner() -> Align.PairwiseAligner:
     aligner = Align.PairwiseAligner()
     aligner.match_score = 2
     aligner.mismatch_score = -2
-    aligner.target_open_gap_score = -15
-    aligner.target_extend_gap_score = -0.01
-    aligner.query_open_gap_score = -200
-    aligner.query_extend_gap_score = -2
-    aligner.query_end_gap_score = -200
-    aligner.target_end_gap_score = -200
+    set_gap_scores(
+        aligner,
+        target_open_gap_score=-15,
+        target_extend_gap_score=-0.01,
+        query_open_gap_score=-200,
+        query_extend_gap_score=-2,
+        query_end_gap_score=-200,
+        target_end_gap_score=-200,
+    )
     aligner.mode = "global"
     return aligner
 
-def _align_reads_chunk(reads_chunk, ref_dict, alpha=1):
+def _align_reads_chunk(reads_chunk, ref_dict, alpha=2.0):
     """
     Align a chunk of reads to all reference sequences (WT + ITDs),
     computing both raw and adjusted scores on the stored read orientation.
@@ -65,9 +70,10 @@ def _align_reads_chunk(reads_chunk, ref_dict, alpha=1):
 
         # Record results
         for alias, aln, raw_score in best_alignments:
-            # Keep PID as 0-1 fraction to match downstream thresholds (e.g. min_pid=0.9).
+            # block identity gates read quality; span identity picks the reference
             pid = percent_identity(aln) if aln else 0.0
-            adjusted_score = compute_adjusted_score(aln, alpha, pid=pid)
+            span_pid = span_identity(aln) if aln else 0.0
+            adjusted_score = compute_adjusted_score(aln, alpha, pid=span_pid)
             aligned_blocks = aln.aligned if aln else []
             results.append({
                 "read_id": rid,
@@ -76,6 +82,7 @@ def _align_reads_chunk(reads_chunk, ref_dict, alpha=1):
                 "score": raw_score,
                 "adjusted_score": adjusted_score,
                 "pct_identity": pid,
+                "span_identity": span_pid,
                 "aligned_blocks": aligned_blocks,
             })
 
@@ -107,9 +114,7 @@ def align_reads_multi_ref_parallel(reads_df, ref_dict, df_cons, logger, threads=
     reads_list = list(zip(reads_df["read_id"], reads_df["read_seq"], reads_df["strand"]))
     if threads < 1:
         threads = 1
-    # Several chunks per worker rather than exactly one: with one batch each,
-    # a single slow worker stalls the whole pass and nothing can be stolen
-    # from it. Smaller batches let the pool rebalance; total IPC is unchanged.
+    # several chunks per worker so the pool can rebalance around a slow one
     chunks_per_worker = 4
     chunk_size = max(1, int(np.ceil(len(reads_list) / (threads * chunks_per_worker))))
     batches = [reads_list[i:i + chunk_size] for i in range(0, len(reads_list), chunk_size)]
@@ -152,9 +157,8 @@ def align_reads_multi_ref_parallel(reads_df, ref_dict, df_cons, logger, threads=
     df_results = pd.DataFrame(all_results)
     logger.info(f"[align_reads_multi_ref_parallel] Collected {len(df_results)} total alignments.")
 
-    # Workers complete in nondeterministic order, so row order here varies
-    # between runs. Pin it before any ranking, otherwise exact score ties are
-    # broken by whichever worker happened to finish first.
+    # workers finish in nondeterministic order; pin row order before ranking so
+    # score ties do not depend on it
     df_results = df_results.sort_values(
         ["read_id", "ref_alias"], kind="mergesort"
     ).reset_index(drop=True)
@@ -175,9 +179,7 @@ def align_reads_multi_ref_parallel(reads_df, ref_dict, df_cons, logger, threads=
     n_refs = df_results["ref_alias"].nunique()
     logger.info(f"[align_reads_multi_ref_parallel] Detected {n_refs} reference sequences.")
 
-    # A read supports whichever reference scores highest. Ties break towards WT
-    # (a coin flip should not become a variant call), then alphabetically, so the
-    # outcome never depends on which worker finished first.
+    # ties break towards WT: a coin flip should not become a variant call
     df_results["_wt_first"] = (df_results["ref_alias"] == "WT").astype(int)
 
     # --- Metric selection ---
@@ -218,7 +220,7 @@ def align_reads_multi_ref_parallel(reads_df, ref_dict, df_cons, logger, threads=
     df_second = ranked[ranked["_rank"] == 1].reset_index(drop=True)
 
     df_best = df_best.merge(
-        df_second[["read_id", "ref_alias", "metric_value"]],
+        df_second[["read_id", "ref_alias", "metric_value", "prob_score"]],
         on="read_id",
         suffixes=("", "_second"),
         how="left",
@@ -229,6 +231,7 @@ def align_reads_multi_ref_parallel(reads_df, ref_dict, df_cons, logger, threads=
     df_best["second_best_ref"] = df_best["ref_alias_second"]
     df_best["second_best_score"] = df_best["metric_value_second"]
     df_best["delta"] = df_best["metric_value"] - df_best["metric_value_second"]
+    df_best["prob_delta"] = df_best["prob_score"] - df_best["prob_score_second"]
     df_best.drop(columns=["ref_alias_second", "metric_value_second"], inplace=True, errors="ignore")
 
     # --- Classification ---
@@ -251,10 +254,8 @@ def align_reads_multi_ref_parallel(reads_df, ref_dict, df_cons, logger, threads=
         min_pid=0.9,
     )
 
-    # aligned_blocks holds raw numpy index arrays used only by the validation
-    # step above. Left in place it is written verbatim into
-    # *_validation_read_support.tsv as array reprs (tens of MB of unreadable
-    # text on a deep run), so drop it once validation has consumed it.
+    # scratch arrays used only by validation; they would otherwise be written
+    # into the TSV as unreadable numpy reprs
     df_best = df_best.drop(columns=["aligned_blocks"], errors="ignore")
 
     # --- Summary ---

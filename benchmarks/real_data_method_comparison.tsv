@@ -1,0 +1,13 @@
+sample	true_itds	method	itds_called	correct	consensus_Ns	failure
+11531	1	gmm2pass	1	1	0	
+11531	1	isonclust	1	1	0	
+11531	1	dada2	1	1	0	
+11531	1	amplici	1	1	0	
+13697	3	gmm2pass	3	3	0	
+13697	3	isonclust	2	2	14	lost the 30bp ITD; merged into the 24bp peak, adding 14 Ns
+13697	3	dada2	3	3	0	
+13697	3	amplici	2	2	12	lost the 30bp ITD; split the 24bp peak into two spurious 24bp clusters
+14219	2	gmm2pass	2	2	0	
+14219	2	isonclust	2	2	0	
+14219	2	dada2	2	2	0	
+14219	2	amplici	1	1	0	split the 81bp ITD (AF 0.37) into two 81bp clusters, then lost the call entirely

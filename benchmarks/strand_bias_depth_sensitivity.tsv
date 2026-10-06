@@ -1,0 +1,5 @@
+sample	itd_plus	itd_minus	itd_pct_plus	wt_pct_plus	difference_pp	odds_ratio	fisher_p	n_reads	flagged_by_p_alone	flagged_now
+10808	2753	2829	49.3	52.4	-3.05	0.885	0.000478	13537	yes	no
+10808 @ 50% depth	1376	1414	49.3	52.4	-3.05	0.885	0.0135	6767	yes	no
+10808 @ 10% depth	275	282	49.3	52.4	-3.05	0.885	0.294	1351	no	no
+10808 @ 2% depth	55	56	49.3	52.4	-3.05	0.885	0.71	269	no	no

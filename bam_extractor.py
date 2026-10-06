@@ -4,6 +4,8 @@ BAM Read Extractor Module
 Extracts reads mapping to FLT3 region and performs primer trimming
 """
 
+from command_audit import record_command
+
 import logging
 import pysam
 from pathlib import Path
@@ -16,6 +18,21 @@ import shutil
 
 
 logger = logging.getLogger(__name__)
+
+# Phred+33 offset, as written in FASTQ and expected by the haplotype clusterers.
+PHRED_OFFSET = 33
+
+
+def _phred_to_string(rec) -> str:
+    """Render a SeqRecord's base qualities as a Phred+33 string.
+
+    Returns an empty string when the record carries no qualities, which keeps
+    sequence-only inputs usable by everything that does not need Q.
+    """
+    quals = rec.letter_annotations.get("phred_quality")
+    if not quals:
+        return ""
+    return "".join(chr(min(int(q), 93) + PHRED_OFFSET) for q in quals)
 
 
 class FLT3ReadExtractor:
@@ -96,10 +113,8 @@ class FLT3ReadExtractor:
         # so a path containing a quote or a space cannot break (or inject into)
         # a command line.
         fastq_cmd = ["samtools", "fastq", "-"]
-        logger.info(
-            "Running samtools view + fastq for region: %s | %s > %s",
-            " ".join(samtools_view_cmd), " ".join(fastq_cmd), fastq_out,
-        )
+        record_command(samtools_view_cmd, stdin="inherited", stdout="pipe:samtools-fastq", stderr="captured")
+        record_command(fastq_cmd, stdin="pipe:samtools-view", stdout=os.path.abspath(fastq_out), stderr="captured")
         view_proc = subprocess.Popen(
             samtools_view_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
@@ -156,8 +171,7 @@ class FLT3ReadExtractor:
             fastq_in
         ]
 
-        logger.info(f"Running cutadapt for primer trimming: {' '.join(cutadapt_cmd)}")
-        logger.debug(f"Full cutadapt command: {cutadapt_cmd}")
+        record_command(cutadapt_cmd, stdin="inherited", stdout="captured", stderr="captured")
         result = subprocess.run(cutadapt_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if result.returncode != 0:
             logger.error(f"Cutadapt failed: {result.stderr.decode()}")
@@ -179,7 +193,15 @@ class FLT3ReadExtractor:
             if rec.id in reads:
                 n_duplicate_ids += 1
             # Keep cutadapt sequence orientation as output, store original orientation via strand tag.
-            reads[rec.id] = {"seq": str(rec.seq), "strand": strand}
+            # Base qualities are kept as a Phred+33 string: the haplotype clusterers
+            # (DADA2) is quality-aware and needs them written
+            # back out per peak. Stored as text rather than a list of ints because it
+            # goes straight into a FASTQ record.
+            reads[rec.id] = {
+                "seq": str(rec.seq),
+                "strand": strand,
+                "qual": _phred_to_string(rec),
+            }
 
         if n_duplicate_ids:
             logger.warning(

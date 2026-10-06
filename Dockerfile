@@ -10,6 +10,10 @@
 
 FROM python:3.10-slim-bookworm
 
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.source="https://github.com/teoloup/FLT3_ITDseeker" \
+      org.opencontainers.image.revision=$VCS_REF
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     MPLBACKEND=Agg
@@ -18,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         samtools \
         build-essential \
         zlib1g-dev libbz2-dev liblzma-dev libcurl4-openssl-dev libssl-dev \
-        git \
+        git curl bzip2 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/itdseeker
@@ -28,11 +32,28 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
     && pip install --no-cache-dir cython \
     && pip install --no-cache-dir -r requirements.txt
 
-COPY *.py ./
+# dada2: R + Bioconductor. Bioconductor lags new R releases, so rather than
+# pinning an R version here and having it drift, this uses a bioconda env, which
+# ships dada2 with a compatible R alongside it. ITDSEEKER_RSCRIPT tells the
+# dada2 backend which interpreter to use.
+ENV MAMBA_ROOT_PREFIX=/opt/mamba \
+    ITDSEEKER_RSCRIPT=/opt/dada2env/bin/Rscript
+RUN curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest \
+        | tar -xj -C /usr/local bin/micromamba \
+    && micromamba create -y -p /opt/dada2env -c conda-forge -c bioconda \
+        bioconductor-dada2 bioconductor-shortread \
+    && micromamba clean -y --all
 
-# samtools and cutadapt must both resolve on PATH; fail the build if not.
+COPY *.py dada2_cluster.R ./
+
+# Also support `apptainer exec image.sif Nano_ITDseeker ...`.
+RUN printf '#!/bin/sh\nexec python /opt/itdseeker/Nano_ITDseeker.py "$@"\n' > /usr/local/bin/Nano_ITDseeker \
+    && chmod +x /usr/local/bin/Nano_ITDseeker
+
+# Fail the build rather than ship an image whose backends are silently missing.
 RUN samtools --version | head -1 \
     && cutadapt --version \
-    && python -c "import pymuscle5, pysam, Bio, sklearn; print('deps OK')"
+    && python -c "import pymuscle5, pysam, Bio, sklearn; print('python deps OK')" \
+    && "$ITDSEEKER_RSCRIPT" -e 'library(dada2); cat("dada2", as.character(packageVersion("dada2")), "OK\n")'
 
 ENTRYPOINT ["python", "/opt/itdseeker/Nano_ITDseeker.py"]

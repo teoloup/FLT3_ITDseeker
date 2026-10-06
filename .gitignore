@@ -16,3 +16,14 @@ temp/
 test_data/
 test_output/
 *.xlsx
+
+# Local review environments, supplied data and generated validation artifacts
+.review-venv/
+.validation-venv/
+bam_data/
+review/baseline/
+review/*.tar
+review/runs/
+review/synthetic/
+.validation-r/
+review/tools/

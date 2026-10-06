@@ -1,0 +1,57 @@
+================ SAMPLE 13697 ================
+---- gmm2pass exit=0
+     ITD_1_S1       len=24   n=531    Ns=0
+     ITD_2          len=72   n=535    Ns=0
+     ITD_1_S2       len=30   n=241    Ns=0
+     total Ns = 0
+     CALL ITD_1_S1 pos=28034125 ITD_LEN=24 AF=0.08687
+     CALL ITD_2 pos=28034103 ITD_LEN=72 AF=0.08048
+     CALL ITD_1_S2 pos=28034149 ITD_LEN=30 AF=0.03937
+---- isonclust exit=0
+     ITD_1          len=24   n=864    Ns=14
+     ITD_2          len=72   n=535    Ns=0
+     total Ns = 14
+     CALL ITD_1 pos=28034125 ITD_LEN=24 AF=0.08487
+     CALL ITD_2 pos=28034103 ITD_LEN=72 AF=0.08456
+---- dada2 exit=0
+     ITD_1_H1       len=24   n=548    Ns=0
+     ITD_2          len=72   n=535    Ns=0
+     ITD_1_H2       len=30   n=280    Ns=0
+     total Ns = 0
+     CALL ITD_1_H1 pos=28034125 ITD_LEN=24 AF=0.08687
+     CALL ITD_2 pos=28034103 ITD_LEN=72 AF=0.08048
+     CALL ITD_1_H2 pos=28034149 ITD_LEN=30 AF=0.03937
+---- amplici exit=0
+     ITD_2          len=72   n=535    Ns=0
+     ITD_1_H1       len=24   n=334    Ns=0
+     ITD_1_H2       len=24   n=393    Ns=12
+     total Ns = 12
+     CALL ITD_1_H1 pos=28034125 ITD_LEN=24 AF=0.09284
+     CALL ITD_2 pos=28034103 ITD_LEN=72 AF=0.0835
+
+================ SAMPLE 14219 ================
+---- gmm2pass exit=0
+     ITD_2          len=81   n=2896   Ns=0
+     ITD_1          len=30   n=111    Ns=0
+     total Ns = 0
+     CALL ITD_2 pos=28034091 ITD_LEN=81 AF=0.37012
+     CALL ITD_1 pos=28034130 ITD_LEN=30 AF=0.01489
+---- isonclust exit=0
+     ITD_2          len=81   n=2896   Ns=0
+     ITD_1          len=30   n=111    Ns=0
+     total Ns = 0
+     CALL ITD_2 pos=28034091 ITD_LEN=81 AF=0.37012
+     CALL ITD_1 pos=28034130 ITD_LEN=30 AF=0.01489
+---- dada2 exit=0
+     ITD_2          len=81   n=2896   Ns=0
+     ITD_1          len=30   n=111    Ns=0
+     total Ns = 0
+     CALL ITD_2 pos=28034091 ITD_LEN=81 AF=0.37012
+     CALL ITD_1 pos=28034130 ITD_LEN=30 AF=0.01489
+---- amplici exit=0
+     ITD_2_H1       len=81   n=1981   Ns=0
+     ITD_2_H2       len=81   n=659    Ns=0
+     ITD_1          len=30   n=111    Ns=0
+     total Ns = 0
+     CALL ITD_1 pos=28034130 ITD_LEN=30 AF=0.02364
+

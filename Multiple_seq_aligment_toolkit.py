@@ -8,6 +8,7 @@ import pandas as pd
 import logging
 import time
 import pymuscle5
+from Helper_functions import build_default_aligner, find_insertions
 import textwrap
 from typing import Dict, List, Tuple
 from concurrent.futures import ProcessPoolExecutor
@@ -49,7 +50,7 @@ def select_unique_panel(seq_counts: List[Tuple[str,int]],
             break
     return out
 
-def run_muscle5_on_pairs(panel: List[Tuple[str,int]], prefix: str = "ins"
+def run_muscle5_on_pairs(panel: List[Tuple[str,int]], prefix: str = "ins", threads: int = 1
     ) -> Tuple[MultipleSeqAlignment, Dict[str, int]]:
     """
     Returns:
@@ -69,7 +70,8 @@ def run_muscle5_on_pairs(panel: List[Tuple[str,int]], prefix: str = "ins"
         pm_sequences.append(pymuscle5.Sequence(name.encode(), s.encode()))
         weights_by_name[name] = w
 
-    aligner = pymuscle5.Aligner()
+    # The caller divides the requested thread budget across peak workers.
+    aligner = pymuscle5.Aligner(threads=max(1, int(threads)))
     msa = aligner.align(pm_sequences)
 
     bio_records = [
@@ -124,12 +126,16 @@ def weighted_consensus_from_msa(
 
     Returns
     -------
-    consensus : str
-        Weighted consensus sequence (no gaps).
+    (consensus, max_minor_fraction) : tuple[str, float]
+        The weighted consensus (no gaps), paired with the largest per-column
+        fraction of weighted support that disagreed with the called base. That
+        second value is what reveals an unbalanced mixture: an N appears only
+        once the top base falls under `base_threshold`, so two haplotypes at
+        80/20 give a clean consensus, no N, and max_minor_fraction near 0.2.
     """
 
     if len(msa) == 0:
-        return ""
+        return "", 0.0
 
     # --- Prepare alignment matrix ---
     names = [rec.id for rec in msa]
@@ -151,6 +157,7 @@ def weighted_consensus_from_msa(
 
     # --- Weighted consensus computation ---
     consensus_chars = []
+    minor_fractions = []
     for j in kept_positions:
         col = A[:, j]
         mask_col = (col != "-")
@@ -161,16 +168,20 @@ def weighted_consensus_from_msa(
             base_weights[b] = base_weights.get(b, 0.0) + w
         top_base, top_w = max(base_weights.items(), key=lambda kv: kv[1])
         frac = top_w / sum(base_weights.values())
+        # An N only appears once the top base drops below base_threshold, so an
+        # 80/20 mixture looks clean. Track the disagreement itself.
+        minor_fractions.append(1.0 - frac)
         consensus_chars.append(top_base if frac >= base_threshold else ambiguous)
 
     consensus = "".join(consensus_chars).replace("-", "")
+    max_minor = max(minor_fractions) if minor_fractions else 0.0
 
     # --- Optional per-peak plot ---
     if create_plot:
         sample_label = sample_name or "Sample"
         peak_label = peak_alias or "Peak"
         wrapped_consensus = "\n".join(textwrap.wrap(consensus, width=60))
-        plot_title = f"Sample: {sample_label} - {peak_label}\nConsensus (length={len(consensus)}):\n{wrapped_consensus}"
+        plot_title = f"Sample: {sample_label} - {peak_label}\nAligned-sequence consensus (length={len(consensus)}):\n{wrapped_consensus}"
 
         fig, ax = plt.subplots(figsize=(10, 3), dpi=dpi)
         x = np.arange(1, L + 1)
@@ -198,23 +209,20 @@ def weighted_consensus_from_msa(
         out_path = os.path.join(out_dir, fname)
         fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
         plt.close(fig)
-        print(f"[weighted_consensus_from_msa] Saved: {os.path.abspath(out_path)}")
+        logger.info("[weighted_consensus_from_msa] Saved: %s", os.path.abspath(out_path))
 
-    return consensus
+    return consensus, max_minor
 
 def _consensus_for_peak(task):
     """Panel selection + MSA + weighted consensus for one peak.
 
-    This is lifted verbatim out of build_itd_consensus_sequences so it can be
-    pickled to a process pool. Peaks are independent -- each one reads only its
-    own insertion sequences and writes only its own plot -- so evaluating them
-    concurrently cannot change any individual result. Everything derived from
-    the DataFrame (read counts, median insertion position) stays in the parent,
-    and rows are reassembled in the parent's original peak order, so the output
-    is identical to the serial version rather than merely equivalent.
+    Module level so it can be pickled to a process pool. Peaks are independent;
+    DataFrame-derived values stay in the parent and rows are reassembled in the
+    parent's order, so parallel output is identical to serial.
     """
     (alias, seqs, max_unique, min_weight_coverage, base_threshold,
-     min_col_coverage, ambiguous, out_dir, sample_name) = task
+     min_col_coverage, ambiguous, out_dir, sample_name, ref_seq,
+     min_itd_size, max_itd_size, msa_threads) = task
 
     t0 = time.perf_counter()
     seq_counts = dedup_with_counts(seqs)
@@ -223,8 +231,8 @@ def _consensus_for_peak(task):
         max_unique=max_unique,
         min_weight_coverage=min_weight_coverage,
     )
-    msa, weights_by_name = run_muscle5_on_pairs(panel, prefix=alias)
-    consensus = weighted_consensus_from_msa(
+    msa, weights_by_name = run_muscle5_on_pairs(panel, prefix=alias, threads=msa_threads)
+    consensus, max_minor = weighted_consensus_from_msa(
         msa,
         weights_by_name,
         base_threshold=base_threshold,
@@ -235,11 +243,31 @@ def _consensus_for_peak(task):
         sample_name=sample_name,
         peak_alias=alias,
     )
+    # Consensus is an allele in reference context. Recover the insertion and
+    # its boundary from the SAME alignment; never combine a rotated payload
+    # with an independently computed median read boundary.
+    insertion_seq = ""
+    insertion_pos = None
+    if consensus and set(consensus.upper()) - set("ACGT"):
+        logger.warning("[%s] Unresolved bases in context consensus; skipping candidate.", alias)
+    elif consensus:
+        aln = build_default_aligner().align(ref_seq, consensus)[0]
+        candidates = [(p, q, n) for p, q, n in find_insertions(aln)
+                      if n >= min_itd_size]
+        if len(candidates) == 1:
+            p, q, n = candidates[0]
+            if max_itd_size is None or n <= max_itd_size:
+                insertion_seq, insertion_pos = consensus[q:q + n], p
+        if not insertion_seq:
+            logger.warning("[%s] Context consensus has no single insertion within size bounds; skipping candidate.", alias)
     return {
         "alias": alias,
-        "consensus": consensus,
+        "consensus": insertion_seq,
+        "consensus_ins_pos_ref": insertion_pos,
+        "allele_consensus_len": len(consensus),
         "n_unique": len(seq_counts),
         "panel_used": len(panel),
+        "max_minor_fraction": max_minor,
         "elapsed": time.perf_counter() - t0,
     }
 
@@ -248,6 +276,9 @@ def build_itd_consensus_sequences(
     all_itd_insertions,
     comps,
     *,
+    ref_seq,
+    min_itd_size=12,
+    max_itd_size=None,
     sample_name=None,
     max_unique=200,
     min_weight_coverage=0.98,
@@ -258,13 +289,16 @@ def build_itd_consensus_sequences(
     out_dir,
 ):
     """
-    For each ITD peak in comps, deduplicate insertion sequences,
-    perform weighted MSA, and extract weighted consensus.
+    Build reference-context alleles from each (insertion boundary, payload),
+    compute their weighted MSA consensus, and recover a coherent insertion.
+
+    ref_seq is required: isolated payloads can be cyclic rotations of the same
+    allele and cannot safely be aligned independently of their boundaries.
 
     Parameters
     ----------
     all_itd_insertions : pd.DataFrame
-        Must contain columns ['peak_alias', 'ins_seq'].
+        Must contain columns ['peak_alias', 'ins_pos_ref', 'ins_seq'].
     comps : pd.DataFrame
         Must contain ['peak_alias', 'putative_itd_size', 'sd_bp'].
     max_unique : int
@@ -290,6 +324,7 @@ def build_itd_consensus_sequences(
     """
     # Collect the per-peak work first, keeping the parent's peak order so the
     # assembled table does not depend on which worker finishes first.
+    ref_seq = str(ref_seq)
     tasks, meta = [], []
     for _, row in comps.iterrows():
         alias = row["peak_alias"]
@@ -303,21 +338,30 @@ def build_itd_consensus_sequences(
             logger.info(f"[build_itd_consensus_sequences] No insertions for {alias}")
             continue
 
-        seqs = itd_subset["ins_seq"].dropna().tolist()
+        seqs = []
+        for ins in itd_subset.itertuples(index=False):
+            if pd.isna(ins.ins_seq) or not ins.ins_seq:
+                continue
+            pos = int(ins.ins_pos_ref)
+            if not 0 <= pos <= len(ref_seq):
+                raise ValueError(f"Invalid insertion boundary {pos} for {alias}")
+            seqs.append(ref_seq[:pos] + str(ins.ins_seq) + ref_seq[pos:])
         tasks.append((
             alias, seqs, max_unique, min_weight_coverage, base_threshold,
-            min_col_coverage, ambiguous, out_dir, sample_name,
+            min_col_coverage, ambiguous, out_dir, sample_name, ref_seq,
+            min_itd_size, max_itd_size,
         ))
         meta.append({
             "alias": alias,
             "n_total_reads": len(seqs),
-            # median taken here, on the DataFrame, exactly as before
-            "median_ins_pos_ref": int(itd_subset["ins_pos_ref"].median()),
+            "raw_median_ins_pos_ref": int(itd_subset["ins_pos_ref"].median()),
             "expected_itd_bp": row["putative_itd_size"],
             "sd_bp": row["sd_bp"],
         })
 
     n_workers = max(1, min(int(threads), len(tasks)))
+    threads_per_peak = max(1, int(threads) // n_workers)
+    tasks = [task + (threads_per_peak,) for task in tasks]
     t_all = time.perf_counter()
     if n_workers > 1:
         logger.info(
@@ -332,6 +376,8 @@ def build_itd_consensus_sequences(
 
     results = []
     for m, o in zip(meta, outputs):
+        if not o["consensus"]:
+            continue
         logger.info(
             f"[build_itd_consensus_sequences] {m['alias']}: "
             f"total_reads={m['n_total_reads']}, unique={o['n_unique']}, "
@@ -343,7 +389,12 @@ def build_itd_consensus_sequences(
             "n_unique": o["n_unique"],
             "consensus_len": len(o["consensus"]),
             "consensus_seq": o["consensus"],
-            "median_ins_pos_ref": m["median_ins_pos_ref"],
+            "max_minor_fraction": round(float(o["max_minor_fraction"]), 4),
+            "consensus_ins_pos_ref": o["consensus_ins_pos_ref"],
+            # Retained as a compatibility alias; this is now the consensus anchor.
+            "median_ins_pos_ref": o["consensus_ins_pos_ref"],
+            "raw_median_ins_pos_ref": m["raw_median_ins_pos_ref"],
+            "allele_consensus_len": o["allele_consensus_len"],
             "expected_itd_bp": m["expected_itd_bp"],
             "sd_bp": m["sd_bp"],
         })
@@ -360,6 +411,6 @@ def build_itd_consensus_sequences(
     consensus_name = f"{sample_name}_itd_consensus_seq.tsv"
     out_tsv = os.path.join(out_dir, consensus_name)
     df_cons.to_csv(out_tsv, sep="\t", index=False)
-    print(f"[build_itd_consensus_sequences] Saved: {os.path.abspath(out_tsv)}")
+    logger.info("[build_itd_consensus_sequences] Saved: %s", os.path.abspath(out_tsv))
 
     return df_cons

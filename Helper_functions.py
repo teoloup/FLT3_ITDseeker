@@ -17,39 +17,53 @@ from Bio.SeqRecord import SeqRecord
 from scipy.stats import fisher_exact
 logger = logging.getLogger(__name__)
 
+# Biopython 1.85 renamed these and warns on every use of the old names; an
+# aligner is built per worker per chunk, so that floods the log.
+_GAP_SCORE_NAMES = {
+    "target_open_gap_score": "open_insertion_score",
+    "target_extend_gap_score": "extend_insertion_score",
+    "target_end_gap_score": "end_insertion_score",
+    "query_open_gap_score": "open_deletion_score",
+    "query_extend_gap_score": "extend_deletion_score",
+    "query_end_gap_score": "end_deletion_score",
+}
+
+
+# Probed on the class: these getters raise ValueError once the underlying
+# values diverge, so hasattr() on a configured instance would blow up.
+_HAS_MODERN_GAP_NAMES = hasattr(Align.PairwiseAligner, "open_insertion_score")
+
+
+def set_gap_scores(aligner, **scores):
+    """Set gap scores by their legacy names, using the current names if present."""
+    for legacy, value in scores.items():
+        name = _GAP_SCORE_NAMES.get(legacy, legacy) if _HAS_MODERN_GAP_NAMES else legacy
+        setattr(aligner, name, value)
+    return aligner
+
+
 def build_default_aligner() -> Align.PairwiseAligner:
     aligner = Align.PairwiseAligner()
     aligner.match_score = 2
     aligner.mismatch_score = -5
-    aligner.target_open_gap_score = -15
-    aligner.target_extend_gap_score = -0.05
-    aligner.query_open_gap_score = -200
-    aligner.query_extend_gap_score = -1.5
-    aligner.query_end_gap_score = 0
-    aligner.target_end_gap_score = 0
+    set_gap_scores(
+        aligner,
+        target_open_gap_score=-15,
+        target_extend_gap_score=-0.05,
+        query_open_gap_score=-200,
+        query_extend_gap_score=-1.5,
+        query_end_gap_score=0,
+        target_end_gap_score=0,
+    )
     aligner.mode = "global"
     return aligner
 
 def insertions_from_aligned_blocks(aln_blocks):
-    """Detect insertions (in query) as large jumps between aligned blocks.
+    """Insertions in query relative to target, as (target_end, query_end, length).
 
-    Blocks returned by Bio.Align are gapless by construction: inside a single
-    block the target and query spans are always the same length. All indel
-    evidence therefore lives in the jumps *between* consecutive blocks, never
-    inside one -- so any check that subtracts the two spans within a block is
-    identically zero and silently passes everything.
-
-    Parameters
-    ----------
-    aln_blocks : array-like or None
-        An ``Alignment.aligned`` value, shape (2, n_blocks, 2), or an empty
-        sequence when no alignment was produced.
-
-    Returns
-    -------
-    list[tuple[int, int, int]]
-        (target_end, query_end, insertion_length) for every inter-block gap
-        where the query advanced further than the target.
+    Blocks from Bio.Align are gapless, so target and query spans within a block
+    are always equal: all indel evidence lives in the jumps between blocks.
+    Takes an ``Alignment.aligned`` value, or an empty sequence if none.
     """
     if aln_blocks is None or len(aln_blocks) != 2:
         return []
@@ -96,9 +110,6 @@ def percent_identity(aln):
     return ident / total if total else 0.0
 
 def find_insertions(aln):
-    # Insertions only ever appear between aligned blocks (see
-    # insertions_from_aligned_blocks); there is no within-block case to fall
-    # back to.
     return find_insertions_between_blocks(aln)
 
 def _seq_in_reference_orientation(read_seq: str, read_strand: str) -> str:
@@ -138,19 +149,41 @@ def process_chunk(chunk, itd_min, itd_max, ref_seq, peak_alias):
             logger.warning(f"[WARN] Alignment failed for {read_id}: {e}")
     return out_rows
 
-def compute_adjusted_score(aln, alpha=0.5, pid=None):
-    """Compute hybrid PID + gap-penalized score from a Biopython alignment.
+def span_identity(aln):
+    """Identity over the full span, counting unaligned bases against the score.
 
-    Pass ``pid`` when percent identity has already been computed for this
-    alignment; recomputing it doubles the cost of the validation pass.
+    Unlike `percent_identity`, which divides by aligned-block length and so reads
+    1.0 for a clean read against *any* reference, this can discriminate between
+    references. `percent_identity` remains the right read-quality measure.
+    """
+    if aln is None:
+        return 0.0
+    target = str(aln.target)
+    query = str(aln.query)
+    matches = 0
+    for (ts, te), (qs, qe) in zip(*aln.aligned):
+        matches += sum(
+            1 for a, b in zip(target[ts:te], query[qs:qe]) if a == b
+        )
+    denom = max(len(target), len(query)) or 1
+    return matches / denom
+
+
+def compute_adjusted_score(aln, alpha=2.0, pid=None):
+    """Score how well a read fits one reference, for competitive assignment.
+
+    ``alpha`` weights unexplained insertions. At 1.0 a 15bp structural insertion
+    cost only 0.04, below sequencing-error noise, and reads preferred wrong
+    references; correct assignment measured 72% at alpha=1 against 94% at 2-3.
+    ``pid`` is the span identity, passed in to avoid recomputing it.
     """
     if aln is None:
         return 0.0
 
     try:
-        # --- Percent identity (0-1) ---
+        # --- Identity (0-1), span-based: see span_identity ---
         if pid is None:
-            pid = percent_identity(aln)
+            pid = span_identity(aln)
 
         # --- Find insertions (query gaps between blocks) ---
         insertions = find_insertions_between_blocks(aln)
@@ -191,7 +224,10 @@ def classify_read_support(row, metric_used, z_thresh=1.0, delta_thresh=0.05):
 
     # --- Z-score metric ---
     if metric_used == "z_score":
-        if abs(val) >= z_thresh:
+        # Z measures separation from the panel mean, not from the runner-up.
+        # Require a probability margin too, regardless of reference count.
+        margin = row.get("prob_delta", row.get("delta", 0.0))
+        if val >= z_thresh and margin >= delta_thresh:
             return "ITD-supporting" if "ITD" in alias else "WT-supporting"
         else:
             return "Ambiguous"
@@ -261,7 +297,7 @@ def validate_itd_supporting_reads(
                 reasons.append("missing_insertion_position")
                 continue
 
-            ins_pos = int(ins_row["median_ins_pos_ref"].iloc[0])
+            ins_pos = int(ins_row.iloc[0].get("consensus_ins_pos_ref", ins_row.iloc[0].get("median_ins_pos_ref")))
             itd_len = int(ins_row["consensus_len"].iloc[0]) if "consensus_len" in ins_row else 0
 
             if aln_blocks is None or len(aln_blocks) != 2:
@@ -269,18 +305,22 @@ def validate_itd_supporting_reads(
                 reasons.append("missing_alignment_blocks")
                 continue
 
-            # Residual insertions in the read relative to the ITD reference.
+            # Residual insertions AND deletions relative to the ITD reference.
             # The read is aligned to wt[:ins_pos] + itd + wt[ins_pos:], so in
             # ITD-reference coordinates the duplicated segment spans
             # [ins_pos, ins_pos + itd_len); anything within gap_window of that
             # span counts as sitting on a breakpoint.
             lo = ins_pos - gap_window
             hi = ins_pos + itd_len + gap_window
-            gaps_near = sum(
-                ins_len
-                for t_end, _q_end, ins_len in insertions_from_aligned_blocks(aln_blocks)
-                if lo <= t_end <= hi
-            )
+            t_blocks, q_blocks = aln_blocks
+            gaps_near = 0
+            for i in range(len(t_blocks) - 1):
+                t_end, t_next = int(t_blocks[i][1]), int(t_blocks[i + 1][0])
+                q_end, q_next = int(q_blocks[i][1]), int(q_blocks[i + 1][0])
+                # A deletion spans a target interval; count it if that interval
+                # overlaps the ITD window, even when it starts before the window.
+                if t_end <= hi and t_next >= lo:
+                    gaps_near += (t_next - t_end) + (q_next - q_end)
 
             if pid < min_pid:
                 validated.append(False)
@@ -378,7 +418,7 @@ def extract_itd_insertions_from_subset_parallel(
 
     # --- Skip WT ---
     if peak_alias.upper() == "WT":
-        print(f"[INFO] Skipping WT subset alignment ({peak_alias})")
+        logger.info("Skipping WT subset alignment (%s)", peak_alias)
         return pd.DataFrame()
 
     # --- Retrieve expected ITD range ---
@@ -466,19 +506,22 @@ def plot_itd_size_distribution(all_itd_insertions, out_dir, sample_name=None, bi
         Number of histogram bins.
     """
     if all_itd_insertions.empty:
-        print("[plot_itd_size_distribution] No insertions found. Skipping plot.")
+        logger.info("[plot_itd_size_distribution] No insertions found. Skipping plot.")
         return
 
     plt.figure(figsize=(8, 5), dpi=150)
 
     # --- Main histogram + KDE ---
+    # A constant-length peak has singular covariance: draw its histogram
+    # without KDE instead of aborting the variant-calling pipeline.
+    kde_ok = bool((all_itd_insertions.groupby("peak_alias")["ins_len"].nunique() > 1).all())
     sns.histplot(
         data=all_itd_insertions,
         x="ins_len",
         bins=bins,
         hue="peak_alias",
         multiple="stack",
-        kde=True,
+        kde=kde_ok,
         alpha=0.6,
         edgecolor=None,
     )
@@ -533,7 +576,7 @@ def plot_itd_size_distribution(all_itd_insertions, out_dir, sample_name=None, bi
     plt.savefig(fname, dpi=150, bbox_inches="tight")
     plt.close()
 
-    print(f"[plot_itd_size_distribution] Saved: {os.path.abspath(fname)}")
+    logger.info("[plot_itd_size_distribution] Saved: %s", os.path.abspath(fname))
 
 def build_itd_reference_per_peak(
     df_cons,
@@ -585,7 +628,7 @@ def build_itd_reference_per_peak(
     for _, row in df_cons.iterrows():
         alias = row["peak_alias"]
         itd_seq = row["consensus_seq"]
-        ins_pos_local = int(row["median_ins_pos_ref"])
+        ins_pos_local = int(row.get("consensus_ins_pos_ref", row.get("median_ins_pos_ref")))
 
         # Convert local insertion boundary to a 1-based genomic anchor coordinate.
         if ins_pos_local < 1:
@@ -768,7 +811,7 @@ def plot_itd_vs_ref_with_genome(
     fig.savefig(out_path, dpi=dpi)
     plt.close(fig)
 
-    print(f"[plot_itd_vs_ref_with_genome] Saved plot: {os.path.abspath(out_path)}")
+    logger.info("[plot_itd_vs_ref_with_genome] Saved plot: %s", os.path.abspath(out_path))
 
     aligner = build_default_aligner()
     alignment = aligner.align(ref_seq, itd_ref_seq)[0]
@@ -987,3 +1030,95 @@ def calculate_allele_frequencies_and_strand_bias(validation_results_df, min_alle
 
     return summary_df
 
+
+def plot_itd_read_pileup(
+    insertions_df,
+    peak_alias,
+    ref_len,
+    out_dir,
+    sample_name,
+    amplicon_start=None,
+    chrom="chr13",
+    exon_boundaries=None,
+    max_reads=80,
+    dpi=150,
+):
+    """IGV-style pileup of the reads supporting one ITD.
+
+    One row per read, inserted bases drawn where the aligner placed them and
+    coloured by strand. A clean vertical edge means every read agrees on the
+    position; two block widths mean two ITD sizes share the peak.
+    """
+    subset = insertions_df.loc[insertions_df["peak_alias"] == peak_alias]
+    if subset.empty:
+        return None
+
+    n_total = len(subset)
+    # sorted so disagreement shows as a ragged edge rather than scattered
+    subset = subset.sort_values(["ins_pos_ref", "ins_len", "read_id"])
+    if n_total > max_reads:
+        step = n_total / max_reads
+        keep = [int(i * step) for i in range(max_reads)]
+        subset = subset.iloc[keep]
+
+    n_shown = len(subset)
+    fig_h = max(2.6, min(9.0, 0.11 * n_shown + 1.5))
+    fig, ax = plt.subplots(figsize=(11, fig_h), dpi=dpi)
+
+    colour = {"+": "#4a7fb5", "-": "#d8626f"}
+    for row_i, (_, r) in enumerate(subset.iterrows()):
+        ax.add_patch(mpatches.Rectangle(
+            (0, row_i + 0.12), ref_len, 0.76,
+            facecolor="#e9edf1", edgecolor="none",
+        ))
+        pos = float(r["ins_pos_ref"])
+        length = float(r["ins_len"])
+        ax.add_patch(mpatches.Rectangle(
+            (pos, row_i + 0.05), length, 0.90,
+            facecolor=colour.get(str(r["strand"]), "#888"), edgecolor="none",
+        ))
+
+    med_pos = float(subset["ins_pos_ref"].median())
+    ax.axvline(med_pos, color="#1c2430", lw=1.1, ls="--", alpha=0.8, zorder=5)
+
+    if exon_boundaries and amplicon_start is not None:
+        for start, end in exon_boundaries:
+            lo = start - amplicon_start
+            hi = end - amplicon_start
+            if hi < 0 or lo > ref_len:
+                continue
+            ax.add_patch(mpatches.Rectangle(
+                (max(lo, 0), -0.9), min(hi, ref_len) - max(lo, 0), 0.55,
+                facecolor="#2f6f4f", alpha=0.35, edgecolor="none",
+            ))
+
+    ax.set_xlim(0, ref_len)
+    ax.set_ylim(-1.1, n_shown + 0.3)
+    ax.set_yticks([])
+    ax.set_xlabel(
+        f"Position in the {ref_len} bp amplicon"
+        + (f"   ({chrom}:{amplicon_start:,}-{amplicon_start + ref_len:,})"
+           if amplicon_start else "")
+    )
+    shown_note = "" if n_shown == n_total else f", {n_shown} shown"
+    med_len = float(subset["ins_len"].median())
+    ax.set_title(
+        f"{sample_name} — {peak_alias}: {n_total} supporting reads{shown_note}\n"
+        f"insertion {med_len:.0f} bp at amplicon position {med_pos:.0f}",
+        fontsize=10,
+    )
+    ax.legend(handles=[
+        mpatches.Patch(color=colour["+"], label="inserted bases, + strand read"),
+        mpatches.Patch(color=colour["-"], label="inserted bases, - strand read"),
+        mpatches.Patch(color="#e9edf1", label="read aligned to wild-type"),
+    ], loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=3, fontsize=8,
+        frameon=False)
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, f"{sample_name}_{peak_alias}_pileup.png")
+    fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    logger.info("[plot_itd_read_pileup] Saved: %s", out_path)
+    return out_path

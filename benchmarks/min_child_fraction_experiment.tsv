@@ -1,0 +1,7 @@
+method	min_child_fraction	itds_recovered	extra_calls	read_ARI	note
+dada2	0.15	3	0	0.7830	unchanged
+dada2	0.08	3	0	0.7830	guardrail is not the limit; dada2 emits 2 clusters either way
+isonclust	0.15	3	0	0.7635	unchanged
+isonclust	0.08	3	0	0.7635	guardrail is not the limit
+amplici	0.15	3	0	0.5018	ITD_D folded into H1
+amplici	0.08	2	2	0.5666	finds ITD_D as a 4th cluster, but truncates the H1 consensus to 40bp

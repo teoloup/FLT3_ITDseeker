@@ -11,11 +11,13 @@ import traceback
 from pathlib import Path
 from Bio.Seq import Seq
 
+from command_audit import configure_command_log
 from bam_extractor import extract_flt3_reads
-from GMM_peaks import fit_gmm_itds, plot_gmm_itds, refine_peak_substructure_once
+from GMM_peaks import fit_gmm_itds, plot_gmm_itds
+from haplotype_split import BACKENDS, split_peaks
 from Pairwise_aligment_toolkit import align_reads_multi_ref_parallel
 from Write_output import export_itd_vcf, generate_itd_html_report, call_no_itd
-from Helper_functions import extract_itd_insertions_from_subset_parallel, plot_itd_size_distribution, build_itd_reference_per_peak, make_validation_refs, prepare_validation_reads, calculate_allele_frequencies_and_strand_bias
+from Helper_functions import extract_itd_insertions_from_subset_parallel, plot_itd_size_distribution, plot_itd_read_pileup, build_itd_reference_per_peak, make_validation_refs, prepare_validation_reads, calculate_allele_frequencies_and_strand_bias
 from Multiple_seq_aligment_toolkit import build_itd_consensus_sequences
 
 def install_unhandled_exception_logger():
@@ -70,6 +72,10 @@ if __name__ == "__main__":
         "--wt-amplicon-length",  type = int, default = 336, help = "Amplicon length of wild type"
     )
     parser.add_argument(
+        "--wt-peak-tolerance", type=float, default=5.0,
+        help="Maximum distance from expected WT length to label a peak WT (bp; default: 5).",
+    )
+    parser.add_argument(
         "--per-peak-read-assignment-mode",  type = str, default = "manual", choices=['manual', 'predict_proba', 'hybrid'], help = "Read assignment mode for each peak (default: manual)"
     )
     parser.add_argument(
@@ -94,19 +100,31 @@ if __name__ == "__main__":
         "--disable-subpeak-refinement", action="store_true", help="Disable one-level local refinement of each initial ITD peak."
     )
     parser.add_argument(
-        "--min-reads-for-subpeak-refinement", type=int, default=150, help="Minimum reads in a parent peak to attempt one-level subpeak refinement (default: 150)."
+        "--haplotype-method", choices=sorted(BACKENDS), default="dada2",
+        help="Per-peak sequence clustering: dada2 (default), or none to disable splitting.",
+    )
+    parser.add_argument(
+        "--cluster-wt-peak", action="store_true",
+        help="Also run haplotype splitting on the WT peak, to look for ITDs hiding inside it (default: off).",
+    )
+    parser.add_argument(
+        "--min-haplotype-reads", type=int, default=20,
+        help="Minimum reads for a sequence cluster to become its own haplotype (default: 20).",
+    )
+    parser.add_argument(
+        "--dada2-omega-a", type=float, default=1e-40,
+        help="DADA2 OMEGA_A: p-value threshold for splitting off a new ASV. Lower is more conservative (default: 1e-40).",
+    )
+    parser.add_argument(
+        "--dada2-band-size", type=int, default=32,
+        help="DADA2 BAND_SIZE. 32 is the value DADA2 documents for long indel-prone reads (default: 32).",
+    )
+    parser.add_argument(
+        "--dada2-homopolymer-gap-penalty", type=float, default=-1.0,
+        help="DADA2 HOMOPOLYMER_GAP_PENALTY, softening gaps where ONT errors concentrate (default: -1.0).",
     )
     parser.add_argument(
         "--min-subpeak-fraction", type=float, default=0.15, help="Minimum fraction per child subpeak when splitting a parent peak (default: 0.15)."
-    )
-    parser.add_argument(
-        "--min-subpeak-distance", type=float, default=3.0, help="Minimum distance (bp) between child means to keep a split (default: 3.0)."
-    )
-    parser.add_argument(
-        "--max-subpeak-sd", type=float, default=5.0, help="Maximum SD (bp) for each child subpeak in refinement (default: 5.0)."
-    )
-    parser.add_argument(
-        "--min-bic-gain-for-subpeak-split", type=float, default=10.0, help="Minimum BIC gain (k=1 minus k=2) to accept a local split (default: 10.0)."
     )
     parser.add_argument(
         "--msa-max-unique", type=int, default=150, help="Maximum unique insertion sequences used per peak for MSA consensus (default: 150)."
@@ -140,6 +158,8 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+    if args.wt_peak_tolerance < 0 or args.wt_peak_tolerance >= args.min_itd_size:
+        parser.error("--wt-peak-tolerance must be nonnegative and smaller than --min-itd-size")
     
     # creating the logger object, and setting the log level
     logger = logging.getLogger()
@@ -169,11 +189,10 @@ if __name__ == "__main__":
     max_peak_sd = args.max_peak_sd
     min_gmm_peak_distance = args.min_gmm_peak_distance
     enable_subpeak_refinement = not args.disable_subpeak_refinement
-    min_reads_for_subpeak_refinement = args.min_reads_for_subpeak_refinement
+    haplotype_method = args.haplotype_method
+    cluster_wt_peak = args.cluster_wt_peak
+    min_haplotype_reads = args.min_haplotype_reads
     min_subpeak_fraction = args.min_subpeak_fraction
-    min_subpeak_distance = args.min_subpeak_distance
-    max_subpeak_sd = args.max_subpeak_sd
-    min_bic_gain_for_subpeak_split = args.min_bic_gain_for_subpeak_split
     msa_max_unique = args.msa_max_unique
     msa_min_weight_coverage = args.msa_min_weight_coverage
     msa_base_threshold = args.msa_base_threshold
@@ -207,6 +226,8 @@ if __name__ == "__main__":
         except Exception as e:
             logger.error(f"Error creating FLT3 data folder: {e}")
             sys.exit(1)
+
+    configure_command_log(output_folder / f"{sample_name}_commands.jsonl")
 
     if not Path(bam_file).exists():
         logger.error(f"BAM file does not exist: {bam_file}")
@@ -322,6 +343,7 @@ if __name__ == "__main__":
             min_ggmm_peak_distance=min_gmm_peak_distance,
             force_k=force_k,
             wt_amplicon_length=wt_amplicon_length,
+            wt_peak_tolerance=args.wt_peak_tolerance,
         )
     except RuntimeError as e:
         if "No GMM components passed filtering criteria" in str(e):
@@ -339,21 +361,39 @@ if __name__ == "__main__":
     peak_subsets = gmm_fit.peak_subsets
 
     if enable_subpeak_refinement:
-        logger.info("Running one-level per-peak substructure refinement...")
-        refine_result = refine_peak_substructure_once(
-            comps=comps,
-            reads_df=reads_df,
-            peak_subsets=peak_subsets,
-            min_reads_for_refinement=min_reads_for_subpeak_refinement,
-            min_child_fraction=min_subpeak_fraction,
-            min_subpeak_distance=min_subpeak_distance,
-            max_subpeak_sd=max_subpeak_sd,
-            min_bic_gain_for_split=min_bic_gain_for_subpeak_split,
+        effective_method = haplotype_method
+    else:
+        # --disable-subpeak-refinement predates --haplotype-method and still wins.
+        effective_method = "none"
+
+    def split_with(method, base_comps, base_reads_df, base_peak_subsets, work_tag=""):
+        """Run one haplotype-splitting method over the first-pass GMM peaks."""
+        if method == "none":
+            return base_comps, base_reads_df, base_peak_subsets
+        result = split_peaks(
+            method,
+            comps=base_comps,
+            reads_df=base_reads_df,
+            peak_subsets=base_peak_subsets,
             wt_amplicon_length=wt_amplicon_length,
+            threads=threads,
+            work_dir=os.path.join(temp_dir, f"haplotypes{work_tag}"),
+            cluster_wt_peak=cluster_wt_peak,
+            wt_peak_tolerance=args.wt_peak_tolerance,
+            min_child_fraction=min_subpeak_fraction,
+            min_child_reads=min_haplotype_reads,
+            tool_kwargs=dict(
+                dada2_omega_a=args.dada2_omega_a,
+                dada2_band_size=args.dada2_band_size,
+                dada2_homopolymer_gap_penalty=args.dada2_homopolymer_gap_penalty,
+            ),
         )
-        comps = refine_result.comps
-        reads_df = refine_result.reads_df
-        peak_subsets = refine_result.peak_subsets
+        return result.comps, result.reads_df, result.peak_subsets
+
+    logger.info(f"Splitting peaks into haplotypes using method: {effective_method}")
+    comps, reads_df, peak_subsets = split_with(
+        effective_method, comps, reads_df, peak_subsets
+    )
 
     if comps.empty:
         finalize_no_itd("No GMM peaks remained after refinement.")
@@ -391,33 +431,100 @@ if __name__ == "__main__":
         finalize_no_itd("No ITD peaks were detected beyond the WT peak.")
         
 
-    # Process per-peak reads and collect insertion calls.
-    all_itd_insertions = []
+    def insertions_and_consensus(cur_comps, cur_reads_df, cur_peak_subsets):
+        """Extract per-read insertions per peak, then build the MSA consensus.
 
-    for alias, read_ids in peak_subsets.items():  # list of IDs per GMM peak
-        if alias.upper() == "WT":
-            continue
-        if not read_ids:
-            logger.info(f"Skipping ITD peak {alias}: no reads assigned after filtering.")
-            continue
-        logger.info(f"Processing ITD peak: {alias} ({len(read_ids)} reads)")
-        df_itd = extract_itd_insertions_from_subset_parallel(
-            reads_df=reads_df,                 # full read table
-            read_ids_subset=read_ids,          # subset of read IDs for this ITD
+        Returns (insertions_df, df_cons), or (None, None) when a peak set yields
+        no insertions at all.
+        """
+        collected = []
+        for alias, read_ids in cur_peak_subsets.items():
+            if alias.upper() == "WT":
+                continue
+            if not read_ids:
+                logger.info(f"Skipping ITD peak {alias}: no reads assigned after filtering.")
+                continue
+            logger.info(f"Processing ITD peak: {alias} ({len(read_ids)} reads)")
+            collected.append(extract_itd_insertions_from_subset_parallel(
+                reads_df=cur_reads_df,
+                read_ids_subset=read_ids,
+                ref_seq=ref_seq,
+                peak_alias=alias,
+                comps=cur_comps,
+                threads=threads,
+                itd_sd_factor=1.5,
+                min_itd_size=min_itd_size,
+                max_itd_size=max_itd_length,
+            ))
+        if not collected:
+            return None, None
+        ins_df = pd.concat(collected, ignore_index=True)
+
+        logger.info("Building ITD consensus sequences per peak...")
+        cons = build_itd_consensus_sequences(
+            all_itd_insertions=ins_df,
+            comps=cur_comps,
             ref_seq=ref_seq,
-            peak_alias=alias,
-            comps=comps,
-            threads=threads,
-            itd_sd_factor=1.5,
             min_itd_size=min_itd_size,
             max_itd_size=max_itd_length,
+            out_dir=flt3_data_folder,
+            sample_name=sample_name,
+            max_unique=msa_max_unique,
+            min_weight_coverage=msa_min_weight_coverage,
+            base_threshold=msa_base_threshold,
+            min_col_coverage=msa_min_col_coverage,
+            ambiguous="N",
+            threads=threads,
         )
-        logger.debug(df_itd)
-        all_itd_insertions.append(df_itd)
+        return ins_df, cons
 
-    if not all_itd_insertions:
+    def consensus_n_stats(cons):
+        """Ambiguity summary for a consensus table.
+
+        Returns (total Ns, worst per-peak N fraction, worst per-peak minority
+        fraction). The third is what catches an unbalanced mixture: an N is
+        emitted only once the top base falls under --msa-base-threshold (0.7), so
+        two haplotypes at 80/20 give a clean consensus of the majority, no N
+        anywhere, and the minor ITD silently absorbed. Measured on simulated
+        data that case shows 0 Ns with a minority fraction of 0.22, while every
+        clean peak in the real validation set stays at or below 0.10.
+        """
+        if cons is None or cons.empty:
+            return 0, 0.0, 0.0
+        total = 0
+        worst = 0.0
+        worst_minor = 0.0
+        for _, row in cons.iterrows():
+            seq = row.get("consensus_seq") or ""
+            n = seq.count("N")
+            total += n
+            if seq:
+                worst = max(worst, n / len(seq))
+            try:
+                worst_minor = max(worst_minor, float(row.get("max_minor_fraction", 0.0)))
+            except (TypeError, ValueError):
+                pass
+        return total, worst, worst_minor
+
+    applied_method = effective_method
+
+    insertions_df, df_cons = insertions_and_consensus(comps, reads_df, peak_subsets)
+    if insertions_df is None:
         finalize_no_itd("No ITD insertions were detected after peak processing.")
-    insertions_df = pd.concat(all_itd_insertions, ignore_index=True)
+
+    n_total, n_worst, minor_worst = consensus_n_stats(df_cons)
+    logger.info(
+        "Consensus ambiguity: %d N%s total, worst peak %.1f%% N, worst minority "
+        "support %.1f%%.",
+        n_total, "" if n_total == 1 else "s", 100 * n_worst, 100 * minor_worst,
+    )
+    if minor_worst > 0.15 or n_worst > 0.05:
+        logger.warning(
+            "A consensus still looks mixed after clustering (%.1f%% N, %.1f%% minority "
+            "support). Treat those calls as provisional.",
+            100 * n_worst, 100 * minor_worst,
+        )
+
     logger.debug("Per-read insertion found (first 20 reads):")
     logger.debug(insertions_df[:20])
 
@@ -434,20 +541,23 @@ if __name__ == "__main__":
         sample_name=sample_name
     )
 
-    # Build consensus sequences per peak using MSA
-    logger.info("Building ITD consensus sequences per peak...")
-    df_cons = build_itd_consensus_sequences(
-    all_itd_insertions=insertions_df,
-    comps=comps,
-    out_dir=flt3_data_folder,
-    sample_name=sample_name,
-    max_unique=msa_max_unique,
-    min_weight_coverage=msa_min_weight_coverage,
-    base_threshold=msa_base_threshold,
-    min_col_coverage=msa_min_col_coverage,
-    ambiguous="N",
-    threads=threads,
-    )   
+    # Per-ITD read pileup: shows where each supporting read placed the insertion,
+    # which is how a reader tells a clean ITD from a peak holding two of them.
+    logger.info("Creating per-ITD read pileups...")
+    for alias in insertions_df["peak_alias"].dropna().unique():
+        try:
+            plot_itd_read_pileup(
+                insertions_df=insertions_df,
+                peak_alias=str(alias),
+                ref_len=len(ref_seq),
+                out_dir=flt3_data_folder,
+                sample_name=sample_name,
+                amplicon_start=amplicon_coords[genome]["start"],
+                chrom=amplicon_coords[genome]["chr"],
+                exon_boundaries=exon_boundaries,
+            )
+        except Exception as e:
+            logger.warning(f"Could not draw read pileup for {alias}: {e}")
 
     logger.info("Per-peak consensus sequences:")
     logger.debug(df_cons)
@@ -509,6 +619,31 @@ if __name__ == "__main__":
     if summary_df.empty:
         finalize_no_itd("No ITDs passed validation and allele-frequency filtering.")
 
+    # Redraw the read-length plot now that validation has run. The first pass
+    # (above) is drawn before any peak has been tested, so it necessarily shows
+    # peaks the pipeline later discards -- a peak that collects no validated
+    # reads, or falls under --min-allele-frequency, never reaches the VCF.
+    # Marking those keeps the plot and the VCF telling the same story.
+    reported_aliases = set(summary_df["ref_alias"].astype(str)) if not summary_df.empty else set()
+    plot_gmm_itds(
+        reads_df=reads_df,
+        comps=comps,
+        bins=100,
+        assign_mode=peak_read_assignment_mode,
+        out_prefix=out_prefix,
+        title="FLT3-ITD Read Length Distribution",
+        reported_aliases=reported_aliases,
+    )
+    dropped = [
+        str(a) for a in comps["peak_alias"].astype(str)
+        if a.upper() != "WT" and a not in reported_aliases
+    ]
+    if dropped:
+        logger.info(
+            "Peaks fitted but not reported (no validated support or below the "
+            "allele-frequency threshold): %s", ", ".join(dropped),
+        )
+
     # Save VCF file with validated ITD calls
     logger.info("Writing validated ITD calls to VCF...")
     vcf_path = f"{sample_name}_FLT3_ITD_calls.vcf"
@@ -525,6 +660,8 @@ if __name__ == "__main__":
             itd_refs=itd_refs,
             output_dir=output_folder,
             plots_dir=flt3_data_folder,
+            df_cons=df_cons,
+            haplotype_method=applied_method,
             )
 
     # Cleanup temp directory and intermediate files, if log is debug, keep all files
