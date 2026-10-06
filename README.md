@@ -7,12 +7,40 @@
 1. Extract FLT3-region reads from BAM (`samtools`).
 2. Trim amplicon with primer-aware `cutadapt` (`--rc` enabled).
 3. Fit GMM on read lengths to identify WT/ITD peaks.
-4. Cluster reads within each ITD peak using DADA2 (default).
+4. Split each ITD peak into sequence haplotypes with DADA2 (default).
 5. Extract per-read insertion evidence by pairwise alignment.
-6. Build per-peak consensus with MSA.
+6. Build per-haplotype consensus with MSA, in WT reference context.
 7. Build ITD synthetic references.
 8. Validate reads by competitive alignment against WT + ITD refs.
 9. Compute AF + strand-bias and export VCF (+ optional HTML report).
+
+See `ALGORITHM_LOGIC.md` for how each step works.
+
+## Haplotype Splitting With DADA2
+
+Two different ITDs of the same size give reads of the same length, so the
+length GMM puts them in one peak. Earlier versions tried to split peaks with a
+second, local GMM on read length, but length cannot separate same-length ITDs.
+That second GMM pass is no longer part of the pipeline. DADA2 now clusters each
+peak's reads by sequence instead:
+
+```
+read lengths -> GMM peaks -> DADA2 per peak -> one candidate ITD per haplotype
+             -> insertions, consensus, references, validation, VCF
+```
+
+- DADA2 runs on every ITD peak, not only peaks whose consensus looks mixed. An
+  80/20 mixture yields a clean consensus with no `N`, so a mixed consensus is
+  not a reliable trigger.
+- An amplicon sequence variant (ASV) becomes its own haplotype only if it has at
+  least `--min-haplotype-reads` reads and at least `--min-subpeak-fraction` of
+  the peak. Reads from smaller ASVs are folded into the largest haplotype, so
+  the AF denominator is unchanged.
+- A split peak's haplotypes are named `<peak>_H1`, `<peak>_H2`, ... in
+  decreasing read count.
+- The WT peak is left alone unless `--cluster-wt-peak` is set.
+- Separation is not guaranteed. A consensus that still contains unresolved bases
+  is skipped with a warning rather than reported.
 
 ## Requirements
 
@@ -21,7 +49,10 @@
 - External tools in `PATH`:
   - `samtools`
   - `cutadapt >= 5.2` (required for rightmost matching of the linked 3-prime primer)
-- R with `dada2` and `ShortRead`; set `ITDSEEKER_RSCRIPT` to its Rscript executable if needed.
+- R with the Bioconductor packages `dada2` and `ShortRead`. Bioconductor often
+  lags the newest R release, so if the system `Rscript` cannot load `dada2`, set
+  `ITDSEEKER_RSCRIPT` to an Rscript that can, such as one from a bioconda env.
+  The Docker image does this already.
 - Python packages:
   - `numpy`, `pandas`, `matplotlib`, `seaborn`, `scikit-learn`, `scipy`
   - `biopython`, `pymuscle5`, `pysam`
@@ -60,13 +91,25 @@ python Nano_ITDseeker.py \
 - `--remove-intermediate-files`: delete `flt3_data` at end
 
 Haplotype options:
-- `--haplotype-method dada2|none` (default: `dada2`)
-- `--disable-subpeak-refinement` (alias for disabling splitting)
-- `--cluster-wt-peak`
-- `--min-haplotype-reads`, `--min-subpeak-fraction`
-- `--dada2-omega-a`, `--dada2-band-size`, `--dada2-homopolymer-gap-penalty`
+- `--haplotype-method dada2|none`: per-peak sequence clustering (default:
+  `dada2`). `none` keeps the GMM length peaks unsplit.
+- `--disable-subpeak-refinement`: same as `--haplotype-method none`, and
+  overrides it.
+- `--cluster-wt-peak`: also run DADA2 on the WT peak, to find ITDs hiding inside it
+  (default: off)
+- `--min-haplotype-reads`: minimum reads for an ASV to become a haplotype
+  (default: 20). Peaks with fewer than twice this many reads are not clustered.
+- `--min-subpeak-fraction`: minimum share of the parent peak for an ASV to
+  become a haplotype (default: 0.15)
+- `--dada2-omega-a`: DADA2 `OMEGA_A`, the p-value threshold for splitting off a
+  new ASV. Lower is more conservative (default: `1e-40`).
+- `--dada2-band-size`: DADA2 `BAND_SIZE` (default: 32, the value DADA2 documents
+  for long, indel-prone reads)
+- `--dada2-homopolymer-gap-penalty`: DADA2 `HOMOPOLYMER_GAP_PENALTY` (default:
+  -1). Softens gaps in homopolymers, where ONT errors concentrate.
 
-DADA2 is the only supported ASV tool. The first-pass length GMM remains in use.
+DADA2 is the only supported clustering tool. isONclust and AmpliCI have been
+removed, and the GMM second pass is no longer used.
 
 ## Main Outputs
 
@@ -83,6 +126,15 @@ In `flt3_data/`:
 - `<sample>_validation_refs.fasta`
 - `<sample>_validation_read_support.tsv`
 - per-ITD plots and alignments
+
+In the temp directory (default `<output-folder>/temp`), under
+`haplotypes/dada2_<peak>/`:
+- `reads.fastq`, the peak's reads as given to DADA2
+- `clusters.tsv`, each read's ASV
+- `asvs.fasta`, the inferred ASV sequences with read counts
+
+If the pipeline created the temp directory, it deletes it at the end of the run
+unless `--log-level DEBUG` is set.
 
 ## Notes On Strand Handling
 
