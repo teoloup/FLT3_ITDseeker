@@ -323,10 +323,14 @@ normalise first (`bcftools norm`) or compare modulo the ITD length.
   three-fold skew before a strand artefact is plausible. The report flags bias
   only when both a significant p and a three-fold odds skew are present, or when
   the variant is seen on essentially one strand.
-- **Unresolved-consensus warnings and MSA plots.** Candidates containing
+- **Unresolved-consensus warnings and consensus plots.** Candidates containing
   ambiguous bases are skipped before validation. Inspect the warnings and the
-  per-peak MSA plots to identify mixed or poorly supported peaks. A clean
-  consensus can still hide a lower-frequency haplotype.
+  per-ITD consensus plots to identify mixed or poorly supported peaks. A clean
+  consensus can still hide a lower-frequency haplotype. The plot shows the
+  insertion with the share of reads backing each base, and the most abundant
+  aligned alleles with only their differences printed. A difference shared by
+  hundreds of reads points to a second haplotype; scattered single differences
+  are sequencing noise.
 
 ### The read-length plot
 
