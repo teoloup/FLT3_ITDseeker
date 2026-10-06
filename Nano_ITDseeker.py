@@ -14,7 +14,7 @@ from Bio.Seq import Seq
 from itdseeker.command_audit import configure_command_log
 from itdseeker.bam_extractor import extract_flt3_reads
 from itdseeker.GMM_peaks import fit_gmm_itds, plot_gmm_itds
-from itdseeker.haplotype_split import BACKENDS, split_peaks
+from itdseeker.haplotype_split import BACKENDS, split_peaks, split_by_insertion_length
 from itdseeker.Pairwise_aligment_toolkit import align_reads_multi_ref_parallel
 from itdseeker.Write_output import export_itd_vcf, generate_itd_html_report, call_no_itd
 from itdseeker.Helper_functions import extract_itd_insertions_from_subset_parallel, plot_itd_size_distribution, plot_itd_read_pileup, build_itd_reference_per_peak, make_validation_refs, prepare_validation_reads, calculate_allele_frequencies_and_strand_bias
@@ -431,11 +431,10 @@ if __name__ == "__main__":
         finalize_no_itd("No ITD peaks were detected beyond the WT peak.")
         
 
-    def insertions_and_consensus(cur_comps, cur_reads_df, cur_peak_subsets):
-        """Extract per-read insertions per peak, then build the MSA consensus.
+    def extract_insertions(cur_comps, cur_reads_df, cur_peak_subsets):
+        """Extract per-read insertions per peak.
 
-        Returns (insertions_df, df_cons), or (None, None) when a peak set yields
-        no insertions at all.
+        Returns the insertions table, or None when no peak yields any insertion.
         """
         collected = []
         for alias, read_ids in cur_peak_subsets.items():
@@ -457,11 +456,13 @@ if __name__ == "__main__":
                 max_itd_size=max_itd_length,
             ))
         if not collected:
-            return None, None
-        ins_df = pd.concat(collected, ignore_index=True)
+            return None
+        return pd.concat(collected, ignore_index=True)
 
+    def build_consensus(ins_df, cur_comps):
+        """Build the MSA consensus of each peak's insertions."""
         logger.info("Building ITD consensus sequences per peak...")
-        cons = build_itd_consensus_sequences(
+        return build_itd_consensus_sequences(
             all_itd_insertions=ins_df,
             comps=cur_comps,
             ref_seq=ref_seq,
@@ -476,7 +477,6 @@ if __name__ == "__main__":
             ambiguous="N",
             threads=threads,
         )
-        return ins_df, cons
 
     def consensus_n_stats(cons):
         """Ambiguity summary for a consensus table.
@@ -508,9 +508,26 @@ if __name__ == "__main__":
 
     applied_method = effective_method
 
-    insertions_df, df_cons = insertions_and_consensus(comps, reads_df, peak_subsets)
+    insertions_df = extract_insertions(comps, reads_df, peak_subsets)
     if insertions_df is None:
         finalize_no_itd("No ITD insertions were detected after peak processing.")
+
+    if effective_method != "none":
+        # Insertion lengths are far sharper than read lengths, so two ITDs a few
+        # bp apart that share one length peak separate here.
+        refined, insertions_df = split_by_insertion_length(
+            comps=comps,
+            reads_df=reads_df,
+            peak_subsets=peak_subsets,
+            insertions_df=insertions_df,
+            wt_amplicon_length=wt_amplicon_length,
+            min_child_fraction=min_subpeak_fraction,
+            min_child_reads=min_haplotype_reads,
+            wt_peak_tolerance=args.wt_peak_tolerance,
+        )
+        comps, reads_df, peak_subsets = refined
+
+    df_cons = build_consensus(insertions_df, comps)
 
     n_total, n_worst, minor_worst = consensus_n_stats(df_cons)
     logger.info(

@@ -228,6 +228,30 @@ retain their calls after the context-aware consensus change. See
 `--haplotype-method` accepts `dada2` (default) or `none` to disable splitting.
 DADA2 is the only supported ASV backend. The initial length GMM remains in use.
 
+### ITDs a few bases apart
+
+DADA2 separates haplotypes by substitutions and deliberately tolerates indels,
+the main nanopore error. Two ITDs whose lengths differ by a few bases can
+therefore come out as one ASV, and their read lengths are too close for the GMM.
+Sample 12808 is the worked case: ITDs of 51 and 57 bp, with read lengths
+386 and 391 bp (SD 1.9 each), one GMM peak, one ASV. Only the 51 bp ITD was
+reported, with the mixed-consensus warning at 26% minority support.
+
+The extracted insertion lengths separate them cleanly, because only the inserted
+segment contributes errors:
+
+```
+insertion length   51    52  53  54  55  56   57
+reads             536    17   4   5   2   7  172
+```
+
+After insertion extraction, a peak is split when a second length group has at
+least `--min-haplotype-reads` reads and `--min-subpeak-fraction` of the
+insertions. It must also lie 3 bp or more away, with the count between the
+groups falling to half of the smaller one or less. In 12808 that recovers the
+57 bp ITD at AF 1.6%, against about 1.8% by fragment analysis; the 51 bp ITD
+moves from 5.0% to 4.9%.
+
 ### Unbalanced mixtures leave no N
 
 An `N` appears only when no base clears `--msa-base-threshold` (0.7), which
