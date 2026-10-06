@@ -206,6 +206,14 @@ fit read lengths  -&gt;  peaks
 </code></pre>
 <p>DADA2 attempts to separate same-length haplotypes using sequence evidence. Separation is not guaranteed: the current mixed synthetic challenge still misses the three 45 bp haplotypes. Unresolved consensuses are skipped with a warning; they are not emitted as sequence-resolved variants. All five supplied test BAMs retain their calls after the context-aware consensus change. See <a href="../review/CONSENSUS_VALIDATION.md">the current validation report</a>.</p>
 <p><code>--haplotype-method</code> accepts <code>dada2</code> (default) or <code>none</code> to disable splitting. DADA2 is the only supported ASV backend. The initial length GMM remains in use.</p>
+<h3 id="itds-a-few-bases-apart">ITDs a few bases apart</h3>
+<p>DADA2 separates haplotypes by substitutions and deliberately tolerates indels, the main nanopore error. Two ITDs whose lengths differ by a few bases can therefore come out as one ASV, and their read lengths are too close for the GMM. Sample 12808 is the worked case: ITDs of 51 and 57 bp, with read lengths 386 and 391 bp (SD 1.9 each), one GMM peak, one ASV. Only the 51 bp ITD was reported, with the mixed-consensus warning at 26% minority support.</p>
+<p>The extracted insertion lengths separate them cleanly, because only the inserted segment contributes errors:</p>
+<pre class="lang-text"><code>
+insertion length   51    52  53  54  55  56   57
+reads             536    17   4   5   2   7  172
+</code></pre>
+<p>After insertion extraction, a peak is split when a second length group has at least <code>--min-haplotype-reads</code> reads and <code>--min-subpeak-fraction</code> of the insertions. It must also lie 3 bp or more away, with the count between the groups falling to half of the smaller one or less. In 12808 that recovers the 57 bp ITD at AF 1.6%, against about 1.8% by fragment analysis; the 51 bp ITD moves from 5.0% to 4.9%.</p>
 <h3 id="unbalanced-mixtures-leave-no-n">Unbalanced mixtures leave no N</h3>
 <p>An <code>N</code> appears only when no base clears <code>--msa-base-threshold</code> (0.7), which needs the minority to exceed about 30%. <strong>A more lopsided mixture produces no <code>N</code> at all</strong> — at 80/20 the majority base clears the threshold and a minor ITD would be silently absorbed. That is why the split happens unconditionally rather than in response to <code>N</code>s.</p>
 <p>The consensus table reports <code>max_minor_fraction</code>, the largest share of any column disagreeing with the base called there, as a check that clustering worked:</p>

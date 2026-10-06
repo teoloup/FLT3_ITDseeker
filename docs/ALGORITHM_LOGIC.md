@@ -28,15 +28,18 @@ This document explains the core workflow and the statistical/sequence-analysis p
    - Guardrails decide which ASVs become haplotypes:
      - An ASV needs at least `--min-haplotype-reads` reads (default 20) and at least `--min-subpeak-fraction` of the peak (default 0.15).
      - If fewer than two ASVs pass, the peak is left unsplit.
-     - Reads from ASVs that fail are folded into the largest haplotype rather than dropped. Dropping them would shrink the AF denominator and inflate every other call.
+     - Reads from ASVs that fail, and reads DADA2 leaves unassigned, are folded into the largest haplotype rather than dropped. Dropping them would shrink the AF denominator and inflate every other call.
    - Haplotypes of peak `ITD_1` are named `ITD_1_H1`, `ITD_1_H2`, ... in decreasing read count. Each gets its own mean length, SD, read count and allele fraction, and is processed downstream as an independent candidate ITD.
    - When the WT peak is split, the child closest to the WT length (within `--wt-peak-tolerance`) keeps the `WT` label; the others become `ITD_WT_H*` candidates.
    - `--haplotype-method none` (or `--disable-subpeak-refinement`) skips this step and keeps the GMM peaks as they are.
 
-4. **Per-peak insertion extraction**
+4. **Per-peak insertion extraction, then a split by insertion length**
    - Reads assigned to each ITD peak or haplotype are aligned to the WT reference.
    - Insertions are inferred from alignment block structure.
    - Insertions are filtered to keep lengths compatible with the expected size range of that peak.
+   - DADA2's error model scores substitutions and tolerates indels, so two ITDs a few bp apart can stay in one peak. Their extracted insertion lengths separate cleanly, though, because only the inserted segment contributes errors.
+   - Each peak is therefore split again when its insertion lengths form a second group with at least `--min-haplotype-reads` reads and `--min-subpeak-fraction` of the insertions, 3 bp or more away, and with the count between the groups dropping to at most half of the smaller one.
+   - Reads go to the nearest length group, reads without an insertion to the largest, and the insertion table is relabelled with the new `_H*` aliases. Skipped with `--haplotype-method none`.
 
 5. **Per-peak MSA and consensus, in reference context**
    - Each read's insertion is placed back into the WT sequence at that read's insertion boundary, giving a full allele. Isolated insertion payloads can be cyclic rotations of the same duplication; aligning whole alleles keeps those together.
@@ -205,6 +208,7 @@ For each ITD:
 ## 4) Common Failure Modes and Why They Happen
 
 - **Same-length ITDs in one peak**: the length GMM cannot separate them. DADA2 is meant to. If it does not, the consensus contains `N`s (candidate skipped) or shows a raised `max_minor_fraction` (minor ITD absorbed into the major one).
+- **ITDs a few bp apart in one peak**: too close for the GMM, and DADA2 tolerates the length difference as indel noise. The insertion-length split (step 4) separates them when the minor ITD passes the guardrails. One below 20 reads or 15% of its peak is still absorbed into the major ITD, raising `max_minor_fraction`.
 - **Over-splitting peaks**: DADA2 can call a sequencing-error variant a separate ASV. `OMEGA_A`, `--min-haplotype-reads` and `--min-subpeak-fraction` guard against this. A spurious haplotype usually collects little validated support and is not reported, but check it when it carries many reads.
 - **Minor haplotype below the guardrails**: an ASV under 20 reads or 15% of its peak is folded into the largest haplotype, so a real low-level ITD sharing a length with a dominant one can be absorbed.
 - **Poor validation separation**: references too similar or low-quality reads reduce best-vs-second-best margin.

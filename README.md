@@ -8,7 +8,8 @@
 2. Trim amplicon with primer-aware `cutadapt` (`--rc` enabled).
 3. Fit GMM on read lengths to identify WT/ITD peaks.
 4. Split each ITD peak into sequence haplotypes with DADA2 (default).
-5. Extract per-read insertion evidence by pairwise alignment.
+5. Extract per-read insertion evidence by pairwise alignment, then split peaks
+   whose reads carry clearly different insertion lengths.
 6. Build per-haplotype consensus with MSA, in WT reference context.
 7. Build ITD synthetic references.
 8. Validate reads by competitive alignment against WT + ITD refs.
@@ -39,8 +40,8 @@ That second GMM pass is no longer part of the pipeline. DADA2 now clusters each
 peak's reads by sequence instead:
 
 ```
-read lengths -> GMM peaks -> DADA2 per peak -> one candidate ITD per haplotype
-             -> insertions, consensus, references, validation, VCF
+read lengths -> GMM peaks -> DADA2 per peak -> insertions -> split by insertion length
+             -> one candidate ITD per haplotype -> consensus, references, validation, VCF
 ```
 
 - DADA2 runs on every ITD peak, not only peaks whose consensus looks mixed. An
@@ -48,13 +49,38 @@ read lengths -> GMM peaks -> DADA2 per peak -> one candidate ITD per haplotype
   not a reliable trigger.
 - An amplicon sequence variant (ASV) becomes its own haplotype only if it has at
   least `--min-haplotype-reads` reads and at least `--min-subpeak-fraction` of
-  the peak. Reads from smaller ASVs are folded into the largest haplotype, so
-  the AF denominator is unchanged.
+  the peak. Reads from smaller ASVs, and reads DADA2 leaves unassigned, are
+  folded into the largest haplotype, so the AF denominator is unchanged.
 - A split peak's haplotypes are named `<peak>_H1`, `<peak>_H2`, ... in
   decreasing read count.
 - The WT peak is left alone unless `--cluster-wt-peak` is set.
 - Separation is not guaranteed. A consensus that still contains unresolved bases
   is skipped with a warning rather than reported.
+
+### Splitting by insertion length
+
+DADA2 tells haplotypes apart by substitutions. It deliberately tolerates indels,
+which dominate nanopore errors, so two ITDs whose lengths differ by a few bases
+can come out as one ASV. Their read lengths are also too close for the GMM. For
+example, sample 12808 has ITDs of 51 and 57 bp: 386 and 391 bp reads, each with
+SD 1.9 bp.
+
+Insertion lengths are far sharper, since only the inserted segment contributes
+errors. So after insertion extraction, each peak's insertion lengths are
+checked for a second group: 536 reads at 51 bp and 172 at 57 bp in that sample,
+with almost none between. The peak is split when a group:
+
+- has at least `--min-haplotype-reads` reads and `--min-subpeak-fraction` of the
+  peak's insertions;
+- lies 3 bp or more from the other group;
+- has the read count between the two dropping to half of the smaller group or
+  less, so a noise shoulder is not mistaken for an ITD.
+
+Reads go to the nearest length group; reads without an extracted insertion go to
+the largest. Each group then gets its own consensus and reference, and
+competitive validation decides its AF. This step complements DADA2 rather than
+replacing it: DADA2 still separates same-length ITDs, which no length-based step
+can. It runs whenever haplotype splitting is on.
 
 ## Requirements
 

@@ -14,6 +14,10 @@ Backends receive the full primer-trimmed reads assigned to one peak, with their
 base qualities. Reads within a peak already share a length and are already
 trimmed, so each tool sees the kind of input it was built for. Peaks are
 clustered independently.
+
+After insertion extraction, split_by_insertion_length makes a second pass on
+the extracted insertion lengths, which separate ITDs a few bp apart that both
+the length GMM and DADA2 can merge.
 """
 
 from .command_audit import record_command
@@ -23,7 +27,8 @@ import os
 import shutil
 import subprocess
 import tempfile
-from typing import Callable, Dict, List, Optional
+from collections import Counter
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -92,9 +97,9 @@ def assignments_to_result(
     `min_child_reads` reads to become a haplotype. If fewer than two clusters
     survive, the peak is left unsplit.
 
-    Reads in sub-threshold clusters fold into the largest survivor rather than
-    being dropped, which would shrink the AF denominator and inflate every other
-    call.
+    Reads in sub-threshold clusters, and parent reads the backend left without
+    a cluster, fold into the largest survivor rather than being dropped, which
+    would shrink the AF denominator and inflate every other call.
     """
     reads_out = reads_df.copy()
     subsets_out = {k: list(v) for k, v in peak_subsets.items()}
@@ -139,7 +144,8 @@ def assignments_to_result(
             )
             continue
 
-        # fold sub-threshold clusters into the largest survivor
+        # fold sub-threshold clusters, and reads given no cluster, into the
+        # largest survivor
         kept_labels = {lbl for lbl, _ in keep}
         folded = 0
         biggest = keep[0][0]
@@ -148,10 +154,13 @@ def assignments_to_result(
             if lbl not in kept_labels:
                 merged[biggest].extend(rids)
                 folded += len(rids)
-        if folded:
+        unassigned = [rid for rid in parent_reads if read_to_cluster.get(rid) is None]
+        merged[biggest].extend(unassigned)
+        if folded or unassigned:
             logger.info(
                 "[haplotype_split] %s: folded %d reads from sub-threshold clusters "
-                "into %s_H1.", parent_alias, folded, parent_alias,
+                "and %d reads without a cluster into %s_H1.",
+                parent_alias, folded, len(unassigned), parent_alias,
             )
 
         children = []
@@ -405,3 +414,124 @@ def split_peaks(
     finally:
         if created_tmp:
             shutil.rmtree(work_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Split by insertion length, after insertion extraction
+# ---------------------------------------------------------------------------
+
+# Nanopore indels blur one ITD's insertion length by a base or two either way,
+# so two lengths count as separate ITDs only this far apart...
+MIN_INSERTION_LENGTH_GAP_BP = 3
+# ...and only if the read count between them falls to this share of the smaller
+# group, so a shoulder of one ITD is not mistaken for a second.
+MAX_INSERTION_VALLEY_FRACTION = 0.5
+
+
+def insertion_length_modes(
+    lengths,
+    *,
+    min_reads: int,
+    min_fraction: float,
+    min_gap: int = MIN_INSERTION_LENGTH_GAP_BP,
+    max_valley: float = MAX_INSERTION_VALLEY_FRACTION,
+) -> List[int]:
+    """Insertion lengths that each mark a separate ITD within one peak.
+
+    A candidate is a local maximum of the per-length read count holding at
+    least `min_reads` reads and `min_fraction` of all of them. Taken largest
+    first, a candidate is kept only if it lies `min_gap` bp or more from every
+    length already kept and the count between the two drops to `max_valley`
+    of the smaller one.
+    """
+    counts = Counter(int(x) for x in lengths)
+    total = sum(counts.values())
+    if not total:
+        return []
+    candidates = sorted(
+        (length for length, n in counts.items()
+         if n >= min_reads and n / total >= min_fraction
+         and n >= counts.get(length - 1, 0) and n > counts.get(length + 1, 0)),
+        key=lambda length: (-counts[length], length),
+    )
+    kept: List[int] = []
+    for length in candidates:
+        if all(
+            abs(length - other) >= min_gap
+            and min(counts.get(x, 0) for x in range(min(length, other) + 1, max(length, other)))
+            <= max_valley * min(counts[length], counts[other])
+            for other in kept
+        ):
+            kept.append(length)
+    return sorted(kept)
+
+
+def split_by_insertion_length(
+    *,
+    comps: pd.DataFrame,
+    reads_df: pd.DataFrame,
+    peak_subsets: Dict[str, List[str]],
+    insertions_df: pd.DataFrame,
+    wt_amplicon_length: float,
+    min_child_fraction: float,
+    min_child_reads: int,
+    wt_peak_tolerance: float = 5.0,
+) -> Tuple[PeakRefineResult, pd.DataFrame]:
+    """Split peaks whose reads carry clearly different insertion lengths.
+
+    Two ITDs a few bp apart give read lengths too close for the length GMM to
+    separate, and DADA2 can merge them as well: it scores whole reads, where
+    the extra bases are one indel among each read's own sequencing errors. The
+    extracted insertion lengths are far sharper, since only the inserted
+    segment contributes errors, so a second ITD stands out as its own group.
+
+    Every read of a split peak is assigned: reads with an insertion go to the
+    nearest length group, the rest to the largest. The usual size guardrails
+    apply. Returns the refined peaks and the insertion table relabelled with
+    the new aliases.
+    """
+    assignments: Dict[str, Dict[str, str]] = {}
+    for alias, group in insertions_df.groupby("peak_alias", sort=False):
+        if str(alias).upper() == "WT" or alias not in peak_subsets:
+            continue
+        lengths = group["ins_len"].astype(int)
+        modes = insertion_length_modes(
+            lengths, min_reads=min_child_reads, min_fraction=min_child_fraction
+        )
+        if len(modes) < 2:
+            continue
+        counts = Counter(lengths)
+        largest = max(modes, key=lambda m: (counts[m], -m))
+
+        def nearest(n):
+            # ties go to the group with more reads
+            return min(modes, key=lambda m: (abs(m - n), -counts[m]))
+
+        by_read = {rid: f"{nearest(n)}bp" for rid, n in zip(group["read_id"], lengths)}
+        assignments[alias] = {
+            rid: by_read.get(rid, f"{largest}bp") for rid in peak_subsets[alias]
+        }
+        logger.info(
+            "[insertion_split] %s: separate insertion lengths %s; splitting the peak.",
+            alias, ", ".join(f"{m} bp ({counts[m]} reads)" for m in modes),
+        )
+
+    if not assignments:
+        return PeakRefineResult(comps=comps, reads_df=reads_df,
+                                peak_subsets=peak_subsets), insertions_df
+
+    result = assignments_to_result(
+        comps=comps,
+        reads_df=reads_df,
+        peak_subsets=peak_subsets,
+        assignments=assignments,
+        wt_amplicon_length=wt_amplicon_length,
+        min_child_fraction=min_child_fraction,
+        min_child_reads=min_child_reads,
+        wt_peak_tolerance=wt_peak_tolerance,
+    )
+    alias_of = dict(zip(result.reads_df["read_id"], result.reads_df["gmm_peak_alias"]))
+    relabelled = insertions_df.copy()
+    moved = relabelled["peak_alias"].isin(list(assignments))
+    relabelled.loc[moved, "peak_alias"] = relabelled.loc[moved, "read_id"].map(alias_of)
+    return result, relabelled
