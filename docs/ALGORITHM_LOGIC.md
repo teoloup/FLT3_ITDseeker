@@ -57,6 +57,7 @@ This document explains the core workflow and the statistical/sequence-analysis p
    - WT and all ITD references are written to a multi-reference FASTA for competitive validation.
 
 7. **Competitive validation alignment**
+   - Every primer-trimmed read is validated, not only those the GMM assigned to a peak. The GMM's job is to propose candidates; its narrow read windows (±2 SD, which a near-zero-width component can shrink to ±3 bp) dropped up to 12% of reads, more of them ITD than WT reads, and so biased AF low. `--validate-peak-reads-only` restores the earlier behaviour.
    - Each validation read is aligned to all references (WT + ITD references).
    - Scoring uses adjusted alignment score, softmax normalization, then best-vs-second-best comparison.
    - For multi-reference cases, z-score style normalization is used per read. A winner also needs a softmax margin of at least 0.05 over the runner-up; ties stay ambiguous.

@@ -151,6 +151,11 @@ if __name__ == "__main__":
         "--remove-intermediate-files", action="store_true", help="If set, remove intermediate files after run."
     )
     parser.add_argument(
+        "--validate-peak-reads-only", action="store_true",
+        help="Send only reads assigned to a GMM peak to competitive validation, as before version 2.2. "
+             "By default every trimmed read is validated, since the GMM drops reads at the edges of its peaks.",
+    )
+    parser.add_argument(
         "-t", "--threads", type=int, default=1, help="Number of threads to use (default: 1)."
     )
     parser.add_argument(
@@ -629,9 +634,24 @@ if __name__ == "__main__":
 
     # Prepare reads for validation
     logger.info("Preparing reads for validation alignment...")
-    val_reads = prepare_validation_reads(
-    reads_df=reads_df
-    )
+    if args.validate_peak_reads_only:
+        val_reads = prepare_validation_reads(
+        reads_df=reads_df
+        )
+    else:
+        # The GMM only proposes candidates. Competitive alignment classifies a
+        # read by sequence, so reads the GMM left outside every peak still vote;
+        # dropping them biased AF wherever a peak's read window was narrow.
+        val_reads = pd.DataFrame(
+            [(rid, entry.get("seq", ""), entry.get("strand", "+"))
+             for rid, entry in seqio_reads.items()],
+            columns=["read_id", "read_seq", "strand"],
+        )
+        val_reads = val_reads.loc[val_reads["read_seq"].str.len() > 0]
+        logger.info(
+            "Using all %d trimmed reads for validation (%d assigned to a GMM peak).",
+            len(val_reads), len(reads_df),
+        )
 
     if val_reads.empty:
         finalize_no_itd("No reads available for validation alignment.")
