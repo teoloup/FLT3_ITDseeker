@@ -365,7 +365,7 @@ def generate_itd_html_report(
             plots += (f'<figure><figcaption>Supporting reads, one row each, with the '
                       f'inserted bases marked and coloured by strand. A clean vertical '
                       f'edge means every read placed the insertion at the same position.'
-                      f'</figcaption><img src="{pileup}" alt="{alias} read pileup"></figure>')
+                      f'</figcaption><img class="compact" src="{pileup}" alt="{alias} read pileup"></figure>')
         if ref_plot:
             plots += (f'<figure><figcaption>Position within FLT3</figcaption>'
                       f'<img src="{ref_plot}" alt="{alias} genomic context"></figure>')
@@ -434,7 +434,7 @@ def generate_itd_html_report(
   <h3>No ITD reported</h3>
   <p class="muted">
     No insertion passed validation and the allele-frequency threshold. Check the
-    read-length distribution below: a sample with too few reads, or no peak above
+    read-length distribution above: a sample with too few reads, or no peak above
     the wild-type amplicon length, cannot yield a call.
   </p>
 </section>""")
@@ -581,6 +581,7 @@ def generate_itd_html_report(
   figure {{ margin:0; }}
   figcaption {{ font-size:12px; color:var(--muted); margin-bottom:6px; }}
   img {{ max-width:100%; border:1px solid var(--line); border-radius:6px; display:block; }}
+  img.compact {{ max-width:min(100%, 640px); }}
 
   @media print {{
     body {{ background:#fff; padding:0; }}
@@ -613,13 +614,13 @@ def generate_itd_html_report(
 
   {summary_table}
 
-  <h2>Detected ITDs</h2>
-  {''.join(cards)}
-
-  <h2>Supporting evidence</h2>
+  <h2>Size distributions</h2>
   <section class="card">
     <div class="figures">{overview or '<p class="muted">No overview plots were produced.</p>'}</div>
   </section>
+
+  <h2>Detected ITDs</h2>
+  {''.join(cards)}
 
   <p class="muted" style="margin-top:28px">
     Allele frequency is the share of validated, classified reads assigned to this

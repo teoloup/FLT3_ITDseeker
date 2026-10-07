@@ -1064,10 +1064,10 @@ def plot_itd_read_pileup(
     amplicon_start=None,
     chrom="chr13",
     exon_boundaries=None,
-    max_reads=80,
+    max_reads=30,
     dpi=150,
 ):
-    """IGV-style pileup of the reads supporting one ITD.
+    """IGV-style pileup of the reads supporting one ITD, kept small.
 
     One row per read, inserted bases drawn where the aligner placed them and
     coloured by strand. A clean vertical edge means every read agrees on the
@@ -1086,8 +1086,8 @@ def plot_itd_read_pileup(
         subset = subset.iloc[keep]
 
     n_shown = len(subset)
-    fig_h = max(2.6, min(9.0, 0.11 * n_shown + 1.5))
-    fig, ax = plt.subplots(figsize=(11, fig_h), dpi=dpi)
+    fig_h = max(1.8, min(3.2, 0.05 * n_shown + 1.3))
+    fig, ax = plt.subplots(figsize=(7, fig_h), dpi=dpi)
 
     colour = {"+": "#4a7fb5", "-": "#d8626f"}
     for row_i, (_, r) in enumerate(subset.iterrows()):
@@ -1122,20 +1122,22 @@ def plot_itd_read_pileup(
     ax.set_xlabel(
         f"Position in the {ref_len} bp amplicon"
         + (f"   ({chrom}:{amplicon_start:,}-{amplicon_start + ref_len:,})"
-           if amplicon_start else "")
+           if amplicon_start else ""),
+        fontsize=8,
     )
+    ax.tick_params(labelsize=7)
     shown_note = "" if n_shown == n_total else f", {n_shown} shown"
     med_len = float(subset["ins_len"].median())
     ax.set_title(
-        f"{sample_name} — {peak_alias}: {n_total} supporting reads{shown_note}\n"
+        f"{sample_name} — {peak_alias}: {n_total} supporting reads{shown_note}; "
         f"insertion {med_len:.0f} bp at amplicon position {med_pos:.0f}",
-        fontsize=10,
+        fontsize=8.5,
     )
     ax.legend(handles=[
         mpatches.Patch(color=colour["+"], label="inserted bases, + strand read"),
         mpatches.Patch(color=colour["-"], label="inserted bases, - strand read"),
         mpatches.Patch(color="#e9edf1", label="read aligned to wild-type"),
-    ], loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=3, fontsize=8,
+    ], loc="upper center", bbox_to_anchor=(0.5, -0.24), ncol=3, fontsize=7,
         frameon=False)
     for side in ("top", "right", "left"):
         ax.spines[side].set_visible(False)
