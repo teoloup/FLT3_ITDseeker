@@ -365,6 +365,15 @@ ITD — competitive validation and the allele-frequency filter both sit downstre
 and either can discard one. Peaks that did not survive are drawn dotted and grey
 and labelled **not reported**, so the plot and the VCF agree.
 
+The upper panel shows all trimmed reads (light) and the reads the GMM assigned
+to a peak (dark); the light bars outside each peak are reads the GMM left out,
+which competitive validation still counts. The lower panel zooms in on the ITD
+region, which the WT peak otherwise flattens. Each reported ITD is labelled with
+its length and the AF and read count from the VCF. Peaks split by DADA2 or by
+insertion length share one colour in shades, with a note naming the method. In
+the legend, "GMM weight" is the fitted mixture weight of an unsplit peak, and
+"peak reads" is a peak's share of the reads assigned to any peak.
+
 Sample 11531 showed this under the earlier length-based second pass, which has
 since been replaced by DADA2. That pass split one peak into components 3.18 bp
 apart. The smaller one produced a 123 bp consensus against its own expected
