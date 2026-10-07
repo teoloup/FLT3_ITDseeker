@@ -86,6 +86,7 @@ def assignments_to_result(
     min_child_fraction: float,
     min_child_reads: int,
     wt_peak_tolerance: float = 5.0,
+    split_by: str = "",
 ) -> PeakRefineResult:
     """Turn per-peak read->cluster labels into the standard refinement result.
 
@@ -234,6 +235,8 @@ def assignments_to_result(
                     "parent_peak_alias": alias,
                     "refinement_level": 1,
                     "is_refined_child": True,
+                    # how this peak was split, for the read-length plot
+                    "split_by": split_by,
                 })
         else:
             count = int(eff_counts.get(alias, 0))
@@ -251,6 +254,7 @@ def assignments_to_result(
                 "parent_peak_alias": alias,
                 "refinement_level": int(row.get("refinement_level", 0)),
                 "is_refined_child": bool(row.get("is_refined_child", False)),
+                "split_by": "" if pd.isna(row.get("split_by", "")) else row.get("split_by", ""),
             })
 
     comps_out = (
@@ -358,6 +362,7 @@ def _backend_dada2(**kw) -> PeakRefineResult:
         min_child_fraction=kw["min_child_fraction"],
         min_child_reads=kw["min_child_reads"],
         wt_peak_tolerance=kw.get("wt_peak_tolerance", 5.0),
+        split_by="DADA2",
     )
 
 
@@ -529,6 +534,7 @@ def split_by_insertion_length(
         min_child_fraction=min_child_fraction,
         min_child_reads=min_child_reads,
         wt_peak_tolerance=wt_peak_tolerance,
+        split_by="insertion length",
     )
     alias_of = dict(zip(result.reads_df["read_id"], result.reads_df["gmm_peak_alias"]))
     relabelled = insertions_df.copy()

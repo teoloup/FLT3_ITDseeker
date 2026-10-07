@@ -419,13 +419,14 @@ if __name__ == "__main__":
     #Plot the size distribution and the identified peaks 
     plot_name = f"{sample_name}_itd_gmm_fit"
     out_prefix = os.path.join(flt3_data_folder, plot_name)
+    all_read_lengths = [len(entry.get("seq", "")) for entry in seqio_reads.values()]
     plot_gmm_itds(
         reads_df=reads_df,
         comps=comps,
-        bins=100,
         assign_mode=peak_read_assignment_mode,
         out_prefix=out_prefix,
         title="FLT3-ITD Read Length Distribution",
+        all_read_lengths=all_read_lengths,
     )
 
     non_wt_comps = comps.loc[
@@ -681,14 +682,21 @@ if __name__ == "__main__":
     # reads, or falls under --min-allele-frequency, never reaches the VCF.
     # Marking those keeps the plot and the VCF telling the same story.
     reported_aliases = set(summary_df["ref_alias"].astype(str)) if not summary_df.empty else set()
+    itd_len_of = dict(zip(df_cons["peak_alias"].astype(str), df_cons["consensus_len"]))
+    validated = {
+        str(r.ref_alias): dict(af=float(r.allele_frequency), reads=int(r.n_itd_reads),
+                               itd_len=int(itd_len_of.get(str(r.ref_alias), 0)))
+        for r in summary_df.itertuples()
+    }
     plot_gmm_itds(
         reads_df=reads_df,
         comps=comps,
-        bins=100,
         assign_mode=peak_read_assignment_mode,
         out_prefix=out_prefix,
         title="FLT3-ITD Read Length Distribution",
         reported_aliases=reported_aliases,
+        validated=validated,
+        all_read_lengths=all_read_lengths,
     )
     dropped = [
         str(a) for a in comps["peak_alias"].astype(str)

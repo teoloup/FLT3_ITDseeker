@@ -1,4 +1,6 @@
 import os
+import re
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -490,30 +492,51 @@ def refine_peak_substructure_once(
         peak_subsets=peak_subsets_refined,
     )
 
+def _root_alias(alias):
+    """The GMM peak a split child came from: ITD_1_H2_H1 -> ITD_1."""
+    return re.sub(r"(_H\d+(_\d+)?)+$", "", str(alias))
+
+
+def _shades(base, k):
+    """k shades of one colour, darkest first, for the children of one peak."""
+    base = np.array(mcolors.to_rgb(base))
+    return [tuple(base + (1 - base) * (0.35 * j / max(k - 1, 1))) for j in range(k)]
+
+
 def plot_gmm_itds(
     reads_df,
     comps,
     *,
     assign_mode=None,
-    bins=100,
+    bins=None,
     out_prefix="gmm_plot",
     title,
     reported_aliases=None,
+    validated=None,
+    all_read_lengths=None,
     dpi=150
 ):
     """
-    Plot histogram of read lengths (counts) + GMM component curves (model vs effective AF).
+    Plot read lengths with the fitted peaks, and a zoomed panel of the ITD region.
+
+    The top panel shows every read; the lower one zooms in on the ITD peaks,
+    which the WT peak otherwise flattens. Split peaks share one colour in
+    shades, with a note saying how they were split. Each ITD is labelled with
+    its reported AF when `validated` is given, so the plot and the VCF agree.
 
     Parameters
     ----------
     reads_df : pd.DataFrame
-        Full dataframe from fit_gmm_itds(), must include 'read_len'.
+        Reads assigned to a peak, from fit_gmm_itds() or a split; must include
+        'read_len'.
     comps : pd.DataFrame
-        GMM component summary with ['mean_bp','sd_bp','fraction','effective_allele_freq','peak_alias'].
+        Peaks with ['mean_bp','sd_bp','fraction','effective_allele_freq',
+        'peak_alias']; split children also carry 'is_refined_child' and
+        'split_by'.
     assign_mode : str
         'manual', 'predict_proba', 'hybrid' (for title).
-    bins : int
-        Histogram bins.
+    bins : int or None
+        Histogram bins; None uses 1 bp bins, since read lengths are integers.
     out_prefix : str
         File prefix for saved figure.
     title : str
@@ -524,6 +547,11 @@ def plot_gmm_itds(
         so the plot cannot be read as claiming more ITDs than the VCF contains.
         None draws every peak as reported, which is correct before validation has
         run.
+    validated : dict or None
+        {alias: {"af": float, "reads": int, "itd_len": int}} for reported ITDs.
+    all_read_lengths : array-like or None
+        Lengths of every trimmed read, drawn behind the peak-assigned reads so
+        the reads outside every peak stay visible.
     dpi : int
         Image resolution.
     """
@@ -543,16 +571,18 @@ def plot_gmm_itds(
         logger.warning("[plot_gmm_itds] Read-length array is empty. Skipping GMM plot.")
         mpl_logger.setLevel(prev_level)
         return
+    x_all = (np.asarray(all_read_lengths, dtype=float)
+             if all_read_lengths is not None and len(all_read_lengths) else x)
 
     n = len(x)
-    x_min = float(x.min())
-    x_max = float(x.max())
-    span = x_max - x_min
-    bin_width = span / bins if span > 0 else 1.0
-    xs = np.linspace(x_min, x_max if span > 0 else x_min + 1.0, 2000)
-
-    fig, ax = plt.subplots(figsize=(9, 5), dpi=dpi)
-    assign_mode_title = None
+    x_min = float(min(x.min(), x_all.min()))
+    x_max = float(max(x.max(), x_all.max()))
+    if bins is None:
+        edges = np.arange(np.floor(x_min) - 0.5, np.ceil(x_max) + 1.5, 1.0)
+    else:
+        edges = np.linspace(x_min, x_max if x_max > x_min else x_min + 1.0, int(bins) + 1)
+    bin_width = float(edges[1] - edges[0])
+    xs = np.linspace(edges[0], edges[-1], 3000)
 
     if assign_mode == "manual":
         assign_mode_title = "Manual assignment"
@@ -560,79 +590,150 @@ def plot_gmm_itds(
         assign_mode_title = "Probabilistic assignment"
     elif assign_mode == "hybrid":
         assign_mode_title = "Hybrid assignment"
+    else:
+        assign_mode_title = None
 
-    # --- Histogram of read counts ---
-    ax.hist(
-        x,
-        bins=bins,
-        color="lightgray",
-        alpha=0.6,
-        edgecolor="none",
-        label=f"Reads (n={n})"
-    )
+    rows = sorted(comps.iterrows(), key=lambda kv: float(kv[1]["mean_bp"]))
+    is_wt = {r["peak_alias"]: bool(r.get("is_wt", False)) or str(r["peak_alias"]).upper() == "WT"
+             for _, r in rows}
+    itd_rows = [r for _, r in rows if not is_wt[r["peak_alias"]]]
 
-    ax.set_xlabel("Read length (bp)")
-    ax.set_ylabel("Read count")
-    ax.set_title(f"{title}\nMode: {assign_mode_title or 'GMM model only'}")
+    # One colour per original peak; split children get shades of it.
+    roots = sorted({_root_alias(r["peak_alias"]) for r in itd_rows},
+                   key=lambda a: min(float(r["mean_bp"]) for r in itd_rows
+                                     if _root_alias(r["peak_alias"]) == a))
+    base = dict(zip(roots, sns.color_palette("husl", max(len(roots), 1))))
+    colour = {}
+    for root in roots:
+        members = sorted((r for r in itd_rows if _root_alias(r["peak_alias"]) == root),
+                         key=lambda r: float(r["mean_bp"]))
+        for r, c in zip(members, _shades(base[root], len(members))):
+            colour[r["peak_alias"]] = c
 
-    # --- Plot Gaussian components (from GMM means/sds) ---
-    colors = sns.color_palette("husl", len(comps))
-    mix_curve = np.zeros_like(xs)
+    def curve(row):
+        sd = max(float(row["sd_bp"]), 1e-6)
+        pdf = np.exp(-0.5 * ((xs - float(row["mean_bp"])) / sd) ** 2) / (sd * np.sqrt(2 * np.pi))
+        return pdf * n * bin_width * float(row["fraction"])
 
-    for i, (idx, row) in enumerate(comps.iterrows()):
-        mu, sd, frac = row["mean_bp"], row["sd_bp"], row["fraction"]
-        eff_frac = row.get("effective_allele_freq", np.nan)
-        alias = row.get("peak_alias", f"peak_{i+1}")
-        is_wt = row.get("is_wt", False)
+    def reported(alias):
+        return reported_aliases is None or is_wt[alias] or str(alias) in reported_aliases
 
-        # Gaussian PDF scaled to read counts
-        sd = max(float(sd), 1e-6)
-        pdf = (1/(sd*np.sqrt(2*np.pi))) * np.exp(-0.5 * ((xs - mu)/sd)**2)
-        y = pdf * (n * bin_width) * frac
-        mix_curve += y
+    def style(alias):
+        if is_wt[alias]:
+            return dict(color="black", lw=2.5, ls="-", alpha=0.9)
+        if not reported(alias):
+            return dict(color="#9aa3ad", lw=1.4, ls=":", alpha=0.75)
+        return dict(color=colour[alias], lw=2.0, ls="--", alpha=0.95)
 
-        # A peak the model fitted is not the same thing as an ITD the pipeline
-        # reported: competitive validation and the allele-frequency filter both
-        # sit downstream, and either can discard a peak. When the caller tells us
-        # which aliases survived, say so on the plot rather than leaving a reader
-        # to wonder why the VCF is shorter than the legend.
-        reported = True if reported_aliases is None else (
-            is_wt or str(alias) in reported_aliases
-        )
+    def legend_label(row):
+        alias = row["peak_alias"]
+        text = f"{alias}: μ={float(row['mean_bp']):.1f}, σ={float(row['sd_bp']):.1f}"
+        eff = row.get("effective_allele_freq", np.nan)
+        if bool(row.get("is_refined_child", False)):
+            text += f", peak reads {eff * 100:.1f}% (split)"
+        else:
+            text += f", GMM weight {float(row['fraction']) * 100:.1f}%, peak reads {eff * 100:.1f}%"
+        if not reported(alias):
+            text += "  [not reported]"
+        return text
 
-        # Distinguish WT visually
-        color = "black" if is_wt else colors[i]
-        lw = 2.5 if is_wt else 2.0
-        ls = "-" if is_wt else "--"
-        if not reported:
-            color = "#9aa3ad"
-            lw = 1.4
-            ls = ":"
+    # A few very long reads would otherwise stretch the axis far past every peak.
+    right = max([float(np.percentile(x_all, 99.5))]
+                + [float(r["mean_bp"]) + 4 * float(r["sd_bp"]) for _, r in rows]) + 5
+    beyond = int((x_all > right).sum())
+    off_scale = f"; {beyond:,} longer than {right:.0f} bp off-scale" if beyond else ""
 
-        status = "" if reported or is_wt else "  [not reported]"
-        ax.plot(xs, y, color=color, lw=lw, ls=ls, alpha=0.9 if reported else 0.75,
-                label=f"{alias}: μ={mu:.1f}, σ={sd:.1f}, "
-                      f"model={frac*100:.1f}%, eff={eff_frac*100:.1f}%{status}")
+    def histograms(ax):
+        if x_all is not x:
+            ax.hist(x_all, bins=edges, color="#d9d9d9", edgecolor="none",
+                    label=f"All trimmed reads (n={len(x_all):,}{off_scale})")
+            ax.hist(x, bins=edges, color="#a6a6a6", edgecolor="none",
+                    label=f"Assigned to a peak (n={n:,})")
+        else:
+            ax.hist(x, bins=edges, color="#bdbdbd", edgecolor="none",
+                    label=f"Reads (n={n:,})")
 
-        # Annotate with both AFs
-        y_max = y.max()
-        note = f"Model AF {frac*100:.1f}%\nFitted AF {eff_frac*100:.1f}%"
-        if not reported:
-            note += "\nnot reported"
-        ax.text(
-            mu, y_max * 1.05,
-            note,
-            ha="center", va="bottom",
-            fontsize=8,
-            color=color,
-            fontweight="bold" if is_wt else "normal",
-            bbox=dict(boxstyle="round,pad=0.3",
-                      facecolor="white", edgecolor=color, alpha=0.8)
-        )
+    zoom = None
+    if itd_rows:
+        lo = min(float(r["mean_bp"]) - 4 * float(r["sd_bp"]) for r in itd_rows)
+        hi = max(float(r["mean_bp"]) + 4 * float(r["sd_bp"]) for r in itd_rows)
+        mid, half = (lo + hi) / 2, max((hi - lo) / 2, 10.0)
+        zoom = (max(mid - half, edges[0]), min(mid + half, edges[-1]))
 
-    # --- Legend + layout ---
-    ax.legend(loc="upper right", fontsize=8, frameon=True)
-    ax.grid(alpha=0.3)
+    if zoom is None:
+        fig, axes = plt.subplots(1, 1, figsize=(10, 5), dpi=dpi, squeeze=False)
+    else:
+        fig, axes = plt.subplots(2, 1, figsize=(10, 9), dpi=dpi, squeeze=False,
+                                 gridspec_kw=dict(height_ratios=[1, 1.25]))
+    top = axes[0, 0]
+
+    # --- Full view ---
+    histograms(top)
+    for _, row in rows:
+        top.plot(xs, curve(row), label=legend_label(row), **style(row["peak_alias"]))
+    if zoom is not None:
+        top.axvspan(*zoom, color="#f6dcb4", alpha=0.35, zorder=0)
+    top.set_xlim(edges[0], min(right, edges[-1]))
+    top.set_xlabel("Read length (bp)")
+    top.set_ylabel("Read count")
+    top.set_title(f"{title}\nMode: {assign_mode_title or 'GMM model only'}")
+    top.legend(loc="upper right", fontsize=7.5, frameon=True)
+    top.grid(alpha=0.3)
+
+    # --- ITD region ---
+    if zoom is not None:
+        ax = axes[1, 0]
+        histograms(ax)
+        in_zoom = (xs >= zoom[0]) & (xs <= zoom[1])
+        peak_height = {}
+        for row in itd_rows:
+            y = curve(row)
+            ax.plot(xs, y, **style(row["peak_alias"]))
+            peak_height[row["peak_alias"]] = float(y[in_zoom].max()) if in_zoom.any() else 0.0
+        counts_all, _ = np.histogram(x_all, bins=edges)
+        centres = (edges[:-1] + edges[1:]) / 2
+        visible = (centres >= zoom[0]) & (centres <= zoom[1])
+        y_top = 1.6 * max([1.0] + list(counts_all[visible]) + list(peak_height.values()))
+        ax.set_xlim(*zoom)
+        ax.set_ylim(0, y_top)
+
+        # Labels over each ITD, stacked when two sit within a few bp.
+        level, last_x = 0, None
+        for row in sorted(itd_rows, key=lambda r: float(r["mean_bp"])):
+            alias, mu = row["peak_alias"], float(row["mean_bp"])
+            level = level + 1 if last_x is not None and mu - last_x < 5 else 0
+            last_x = mu
+            info = (validated or {}).get(str(alias))
+            if info:
+                text = f"{alias} · {info['itd_len']} bp\nAF {info['af'] * 100:.2f}% ({info['reads']:,} reads)"
+            elif not reported(alias):
+                text = f"{alias}\nnot reported"
+            else:
+                text = f"{alias}\n{float(row.get('effective_allele_freq', np.nan)) * 100:.1f}% of peak reads"
+            # above the taller of the curve and the bars around it
+            near = visible & (np.abs(centres - mu) <= 4)
+            height = max([peak_height[alias]] + list(counts_all[near]))
+            y = min(height / y_top + 0.03 + 0.16 * level, 0.9)
+            ink = tuple(0.75 * np.array(mcolors.to_rgb(style(alias)["color"])))
+            ax.text(mu, y, text, transform=ax.get_xaxis_transform(), ha="center", va="bottom",
+                    fontsize=8, color=ink)
+
+        notes = []
+        for root in roots:
+            members = sorted((r for r in itd_rows if _root_alias(r["peak_alias"]) == root),
+                             key=lambda r: float(r["mean_bp"]))
+            if len(members) > 1:
+                how = sorted({str(r.get("split_by", "") or "") for r in members} - {""})
+                notes.append(f"{root} split into {', '.join(r['peak_alias'] for r in members)}"
+                             + (f" by {' and '.join(how)}" if how else ""))
+        if notes:
+            ax.text(0.01, 0.98, "\n".join(notes), transform=ax.transAxes, ha="left", va="top",
+                    fontsize=8, color="#333333")
+        ax.set_xlabel("Read length (bp)")
+        ax.set_ylabel("Read count")
+        ax.set_title("ITD region (shaded above)", fontsize=10)
+        ax.grid(alpha=0.3)
+
     fig.tight_layout()
 
     # --- Save ---

@@ -448,7 +448,10 @@ def generate_itd_html_report(
 
     overview = ""
     if gmm_plot:
-        overview += (f'<figure><figcaption>Read-length distribution and fitted peaks</figcaption>'
+        overview += (f'<figure><figcaption>Read-length distribution and fitted peaks. The lower '
+                     f'panel zooms in on the ITD region and labels each reported ITD with its '
+                     f'validated AF; peaks split by DADA2 or by insertion length share one '
+                     f'colour.</figcaption>'
                      f'<img src="{gmm_plot}" alt="GMM fit"></figure>')
     if size_plot:
         overview += (f'<figure><figcaption>Insertion sizes across reads</figcaption>'
