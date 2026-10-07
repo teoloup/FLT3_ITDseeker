@@ -76,6 +76,20 @@ with almost none between. The peak is split when a group:
 - has the read count between the two dropping to half of the smaller group or
   less, so a noise shoulder is not mistaken for an ITD.
 
+Insertion extraction accepts sizes within ±1.5 SD of the peak's ITD size, but
+never less than ±`--min-gmm-peak-distance` (10 bp). Any second ITD closer than
+that shares the peak, and might otherwise be filtered out before this step. In
+a 12808 variant with the second ITD lengthened to 60 bp (+9 bp), it was missed
+without that minimum and is called at AF 1.55% with it. The minimum never
+reaches more than halfway to the nearest other ITD peak. Neighbouring ranges
+therefore don't overlap, and stray reads of one ITD can't seed a copy of it in
+the next peak.
+
+After consensus, candidates that describe the same allele (compared with the
+insertion placed back into WT, so shifted representations match) are merged
+into the one with more reads. Two identical references would otherwise split
+that ITD's reads as ambiguous in competitive validation.
+
 Reads go to the nearest length group; reads without an extracted insertion go to
 the largest. Each group then gets its own consensus and reference, and
 competitive validation decides its AF. This step complements DADA2 rather than

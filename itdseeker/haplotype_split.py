@@ -535,3 +535,88 @@ def split_by_insertion_length(
     moved = relabelled["peak_alias"].isin(list(assignments))
     relabelled.loc[moved, "peak_alias"] = relabelled.loc[moved, "read_id"].map(alias_of)
     return result, relabelled
+
+
+def merge_duplicate_candidates(
+    *,
+    comps: pd.DataFrame,
+    reads_df: pd.DataFrame,
+    peak_subsets: Dict[str, List[str]],
+    insertions_df: pd.DataFrame,
+    df_cons: pd.DataFrame,
+    ref_seq: str,
+    wt_amplicon_length: float,
+) -> Tuple[PeakRefineResult, pd.DataFrame, pd.DataFrame]:
+    """Merge candidates whose consensus is the same ITD allele.
+
+    Two peaks can end with the same consensus, for example when stray reads of
+    one ITD seed a sub-peak next to it. Two identical references would make
+    competitive validation call that ITD's reads ambiguous between them, so the
+    candidates are merged first: the one with more reads keeps its alias and
+    takes the other's reads. Alleles are compared with the insertion placed
+    back into WT, so shifted representations of one duplication match.
+
+    Returns the updated peaks, insertion table and consensus table.
+    """
+    unchanged = (PeakRefineResult(comps=comps, reads_df=reads_df, peak_subsets=peak_subsets),
+                 insertions_df, df_cons)
+    if df_cons is None or df_cons.empty:
+        return unchanged
+
+    ref = str(ref_seq)
+
+    def n_reads(alias):
+        return len(peak_subsets.get(alias, []))
+
+    owner: Dict[str, str] = {}
+    merged_into: Dict[str, str] = {}
+    for row in sorted(df_cons.itertuples(index=False),
+                      key=lambda r: (-n_reads(r.peak_alias), str(r.peak_alias))):
+        pos = int(row.consensus_ins_pos_ref)
+        allele = ref[:pos] + str(row.consensus_seq) + ref[pos:]
+        if allele in owner:
+            merged_into[row.peak_alias] = owner[allele]
+        else:
+            owner[allele] = row.peak_alias
+    if not merged_into:
+        return unchanged
+
+    for dup, keep in merged_into.items():
+        logger.info(
+            "[merge_duplicates] %s has the same allele as %s; merging its %d reads into %s.",
+            dup, keep, n_reads(dup), keep,
+        )
+    subsets = {k: list(v) for k, v in peak_subsets.items()}
+    for dup, keep in merged_into.items():
+        subsets[keep] = subsets.get(keep, []) + subsets.pop(dup, [])
+
+    reads_out = reads_df.copy()
+    moved = reads_out["gmm_peak_alias"].isin(list(merged_into))
+    reads_out.loc[moved, "gmm_peak_alias"] = reads_out.loc[moved, "gmm_peak_alias"].map(merged_into)
+    ins_out = insertions_df.copy()
+    moved = ins_out["peak_alias"].isin(list(merged_into))
+    ins_out.loc[moved, "peak_alias"] = ins_out.loc[moved, "peak_alias"].map(merged_into)
+    cons_out = df_cons.loc[~df_cons["peak_alias"].isin(list(merged_into))].reset_index(drop=True)
+
+    # Counts and fractions add up; length statistics come from the pooled reads.
+    wt_rows = comps.loc[comps["peak_alias"].astype(str).str.upper() == "WT"]
+    wt_mean = float(wt_rows.iloc[0]["mean_bp"]) if not wt_rows.empty else float(wt_amplicon_length)
+    len_by_read = dict(zip(reads_out["read_id"], reads_out["read_len"]))
+    additive = [c for c in ("fraction", "read_count", "effective_read_count",
+                            "effective_allele_freq") if c in comps.columns]
+    comps_out = comps.copy()
+    for dup, keep in merged_into.items():
+        k = comps_out.index[comps_out["peak_alias"] == keep]
+        d = comps_out.index[comps_out["peak_alias"] == dup]
+        for col in additive:
+            comps_out.loc[k, col] = comps_out.loc[k, col].values + comps_out.loc[d, col].values
+    for keep in set(merged_into.values()):
+        lengths = np.array([len_by_read[r] for r in subsets[keep] if r in len_by_read], dtype=float)
+        if lengths.size:
+            k = comps_out["peak_alias"] == keep
+            comps_out.loc[k, "mean_bp"] = lengths.mean()
+            comps_out.loc[k, "sd_bp"] = lengths.std(ddof=0)
+            comps_out.loc[k, "putative_itd_size"] = lengths.mean() - wt_mean
+    comps_out = comps_out.loc[~comps_out["peak_alias"].isin(list(merged_into))].reset_index(drop=True)
+    return (PeakRefineResult(comps=comps_out, reads_df=reads_out, peak_subsets=subsets),
+            ins_out, cons_out)
