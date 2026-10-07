@@ -36,7 +36,7 @@ This document explains the core workflow and the statistical/sequence-analysis p
 4. **Per-peak insertion extraction, then a split by insertion length**
    - Reads assigned to each ITD peak or haplotype are aligned to the WT reference.
    - Insertions are inferred from alignment block structure.
-   - Insertions are filtered to keep lengths compatible with the expected size range of that peak.
+   - Insertions are filtered to keep lengths compatible with the expected size range of that peak: its ITD size ±1.5 SD, but never narrower than ±`--min-gmm-peak-distance` (10 bp) while haplotype splitting is on. Peaks closer than that distance are merged, so a second ITD in the same peak can sit beyond 1.5 SD of its centre. Without the floor, ITDs 7–11 bp apart were lost here before the split below could see them. The floor stops halfway to the nearest other ITD peak, so neighbouring ranges never overlap.
    - DADA2's error model scores substitutions and tolerates indels, so two ITDs a few bp apart can stay in one peak. Their extracted insertion lengths separate cleanly, though, because only the inserted segment contributes errors.
    - Each peak is therefore split again when its insertion lengths form a second group with at least `--min-haplotype-reads` reads and `--min-subpeak-fraction` of the insertions, 3 bp or more away, and with the count between the groups dropping to at most half of the smaller one.
    - Reads go to the nearest length group, reads without an insertion to the largest, and the insertion table is relabelled with the new `_H*` aliases. Skipped with `--haplotype-method none`.
@@ -50,12 +50,14 @@ This document explains the core workflow and the statistical/sequence-analysis p
    - Otherwise the consensus allele is realigned to WT. If it contains exactly one insertion within the size bounds, that insertion's sequence and position become the consensus payload and boundary (`consensus_ins_pos_ref`).
    - The largest per-column minority fraction is reported as `max_minor_fraction`. The pipeline warns when a consensus still looks mixed after clustering (`max_minor_fraction` > 0.15 or more than 5% `N`).
    - A per-ITD plot shows the insertion with 10 bp of WT each side: the per-base agreement, the consensus, and the most abundant aligned alleles with only their differences printed, so a recurrent second haplotype can be told apart from scattered sequencing errors.
+   - Candidates whose consensus gives the same allele (insertion placed back into WT, so shifted representations match) are merged into the one with more reads. Identical references would make competitive validation call that ITD's reads ambiguous between them.
 
 6. **ITD reference construction**
    - For each candidate, the consensus insertion is inserted into WT at the consensus boundary.
    - WT and all ITD references are written to a multi-reference FASTA for competitive validation.
 
 7. **Competitive validation alignment**
+   - Every primer-trimmed read is validated, not only those the GMM assigned to a peak. The GMM's job is to propose candidates; its narrow read windows (±2 SD, which a near-zero-width component can shrink to ±3 bp) dropped up to 12% of reads, more of them ITD than WT reads, and so biased AF low. `--validate-peak-reads-only` restores the earlier behaviour.
    - Each validation read is aligned to all references (WT + ITD references).
    - Scoring uses adjusted alignment score, softmax normalization, then best-vs-second-best comparison.
    - For multi-reference cases, z-score style normalization is used per read. A winner also needs a softmax margin of at least 0.05 over the runner-up; ties stay ambiguous.

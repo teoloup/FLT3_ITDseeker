@@ -318,7 +318,7 @@ chr13  28034081  ITD_1  C  CCAAACTCTAAATTTTCTCTTGGAAACTCCCATTTGAGATCATATT  .  PA
 <ul>
 <li><strong><code>AF</code> against <code>AF_GMM</code>.</strong> They should be close. A large gap means competitive</li>
 </ul>
-<p>  validation reassigned many reads, which is worth understanding before trusting   the call.</p>
+<p>  validation reassigned many reads, which is worth understanding before trusting   the call. <code>AF</code> is computed over every trimmed read that passes validation,   while <code>AF_GMM</code> only covers reads the GMM assigned to a peak, so <code>AF</code> is usually   slightly higher for ITDs.</p>
 <ul>
 <li><strong><code>STRAND_OR</code> before <code>FISHER_P</code>.</strong> The p-value scales with depth, so on a deep</li>
 </ul>

@@ -337,7 +337,9 @@ normalise first (`bcftools norm`) or compare modulo the ITD length.
 
 - **`AF` against `AF_GMM`.** They should be close. A large gap means competitive
   validation reassigned many reads, which is worth understanding before trusting
-  the call.
+  the call. `AF` is computed over every trimmed read that passes validation,
+  while `AF_GMM` only covers reads the GMM assigned to a peak, so `AF` is usually
+  slightly higher for ITDs.
 - **`STRAND_OR` before `FISHER_P`.** The p-value scales with depth, so on a deep
   amplicon it flags differences far too small to matter. Sample 10808 in the
   validation set has an ITD at 49.3% plus against a wild type at 52.4% plus —

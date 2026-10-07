@@ -14,10 +14,10 @@ from Bio.Seq import Seq
 from itdseeker.command_audit import configure_command_log
 from itdseeker.bam_extractor import extract_flt3_reads
 from itdseeker.GMM_peaks import fit_gmm_itds, plot_gmm_itds
-from itdseeker.haplotype_split import BACKENDS, split_peaks, split_by_insertion_length
+from itdseeker.haplotype_split import BACKENDS, merge_duplicate_candidates, split_peaks, split_by_insertion_length
 from itdseeker.Pairwise_aligment_toolkit import align_reads_multi_ref_parallel
 from itdseeker.Write_output import export_itd_vcf, generate_itd_html_report, call_no_itd
-from itdseeker.Helper_functions import extract_itd_insertions_from_subset_parallel, plot_itd_size_distribution, plot_itd_read_pileup, build_itd_reference_per_peak, make_validation_refs, prepare_validation_reads, calculate_allele_frequencies_and_strand_bias
+from itdseeker.Helper_functions import extract_itd_insertions_from_subset_parallel, insertion_window_floor, plot_itd_size_distribution, plot_itd_read_pileup, build_itd_reference_per_peak, make_validation_refs, prepare_validation_reads, calculate_allele_frequencies_and_strand_bias
 from itdseeker.Multiple_seq_aligment_toolkit import build_itd_consensus_sequences, MIXED_MINOR_FRACTION
 
 def install_unhandled_exception_logger():
@@ -149,6 +149,11 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--remove-intermediate-files", action="store_true", help="If set, remove intermediate files after run."
+    )
+    parser.add_argument(
+        "--validate-peak-reads-only", action="store_true",
+        help="Send only reads assigned to a GMM peak to competitive validation, as before version 2.2. "
+             "By default every trimmed read is validated, since the GMM drops reads at the edges of its peaks.",
     )
     parser.add_argument(
         "-t", "--threads", type=int, default=1, help="Number of threads to use (default: 1)."
@@ -454,6 +459,13 @@ if __name__ == "__main__":
                 itd_sd_factor=1.5,
                 min_itd_size=min_itd_size,
                 max_itd_size=max_itd_length,
+                # A second ITD closer than the merge distance shares this peak
+                # and can sit beyond 1.5 SD; keep its insertions for the
+                # insertion-length split.
+                min_half_window=(
+                    insertion_window_floor(alias, cur_comps, min_gmm_peak_distance)
+                    if effective_method != "none" else 0.0
+                ),
             ))
         if not collected:
             return None
@@ -528,6 +540,18 @@ if __name__ == "__main__":
         comps, reads_df, peak_subsets = refined
 
     df_cons = build_consensus(insertions_df, comps)
+    # Two candidates with one allele would split that ITD's reads as ambiguous
+    # between identical references in validation; merge them first.
+    refined, insertions_df, df_cons = merge_duplicate_candidates(
+        comps=comps,
+        reads_df=reads_df,
+        peak_subsets=peak_subsets,
+        insertions_df=insertions_df,
+        df_cons=df_cons,
+        ref_seq=str(ref_seq),
+        wt_amplicon_length=wt_amplicon_length,
+    )
+    comps, reads_df, peak_subsets = refined
 
     n_total, n_worst, minor_worst = consensus_n_stats(df_cons)
     logger.info(
@@ -610,9 +634,24 @@ if __name__ == "__main__":
 
     # Prepare reads for validation
     logger.info("Preparing reads for validation alignment...")
-    val_reads = prepare_validation_reads(
-    reads_df=reads_df
-    )
+    if args.validate_peak_reads_only:
+        val_reads = prepare_validation_reads(
+        reads_df=reads_df
+        )
+    else:
+        # The GMM only proposes candidates. Competitive alignment classifies a
+        # read by sequence, so reads the GMM left outside every peak still vote;
+        # dropping them biased AF wherever a peak's read window was narrow.
+        val_reads = pd.DataFrame(
+            [(rid, entry.get("seq", ""), entry.get("strand", "+"))
+             for rid, entry in seqio_reads.items()],
+            columns=["read_id", "read_seq", "strand"],
+        )
+        val_reads = val_reads.loc[val_reads["read_seq"].str.len() > 0]
+        logger.info(
+            "Using all %d trimmed reads for validation (%d assigned to a GMM peak).",
+            len(val_reads), len(reads_df),
+        )
 
     if val_reads.empty:
         finalize_no_itd("No reads available for validation alignment.")

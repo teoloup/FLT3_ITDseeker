@@ -379,6 +379,23 @@ def empty_insertions_frame() -> pd.DataFrame:
     return pd.DataFrame(columns=INSERTION_COLUMNS)
 
 
+def insertion_window_floor(peak_alias, comps, merge_distance):
+    """Minimum half-width of one peak's insertion-size window, in bp.
+
+    The GMM merge distance, so a second ITD folded into this peak is still
+    extracted for the insertion-length split; but never more than halfway to
+    the nearest other ITD peak, so neighbouring windows do not overlap and
+    stray reads of one ITD cannot seed a copy of it in the next peak.
+    """
+    itd = comps.loc[comps["peak_alias"].astype(str).str.upper() != "WT"]
+    sizes = dict(zip(itd["peak_alias"], itd["putative_itd_size"].astype(float)))
+    if peak_alias not in sizes:
+        return float(merge_distance)
+    own = sizes[peak_alias]
+    halfway = [abs(size - own) / 2 for alias, size in sizes.items() if alias != peak_alias]
+    return min([float(merge_distance)] + halfway)
+
+
 def extract_itd_insertions_from_subset_parallel(
     reads_df: pd.DataFrame,
     read_ids_subset: list,
@@ -389,6 +406,7 @@ def extract_itd_insertions_from_subset_parallel(
     itd_sd_factor: float = 1.0,
     min_itd_size: int = 0,
     max_itd_size: int = None,
+    min_half_window: float = 0.0,
 ) -> pd.DataFrame:
     """
     Strand-aware alignment for ITD subset.
@@ -410,6 +428,11 @@ def extract_itd_insertions_from_subset_parallel(
         Number of threads (chunks = threads).
     itd_sd_factor : float
         Acceptable deviation from ITD size ± (factor × SD).
+    min_half_window : float
+        Floor on that deviation, in bp. GMM peaks closer than the merge
+        distance share one peak, so a second ITD can sit further from the peak
+        centre than factor × SD; passing the merge distance here keeps its
+        insertions for the insertion-length split.
     min_itd_size, max_itd_size : int
         Hard bounds on reportable ITD length. The per-peak window derived
         from the GMM is intersected with [min_itd_size, max_itd_size]; a peak
@@ -426,8 +449,9 @@ def extract_itd_insertions_from_subset_parallel(
     itd_mean = row["putative_itd_size"]
     itd_sd = row["sd_bp"]
 
-    itd_min = itd_mean - itd_sd * itd_sd_factor
-    itd_max = itd_mean + itd_sd * itd_sd_factor
+    half_window = max(itd_sd * itd_sd_factor, float(min_half_window))
+    itd_min = itd_mean - half_window
+    itd_max = itd_mean + half_window
 
     # Intersect the GMM-derived window with the configured size bounds, so
     # --min-itd-size / --max-itd-size actually constrain what gets reported.
@@ -445,7 +469,7 @@ def extract_itd_insertions_from_subset_parallel(
         logger.warning(
             "[extract_itd_insertions_from_subset_parallel] Skipping %s: expected ITD "
             "size %.1f +/- %.1f bp lies outside the allowed range %d-%s bp.",
-            peak_alias, itd_mean, itd_sd * itd_sd_factor, min_itd_size, max_itd_size,
+            peak_alias, itd_mean, half_window, min_itd_size, max_itd_size,
         )
         return empty_insertions_frame()
 
