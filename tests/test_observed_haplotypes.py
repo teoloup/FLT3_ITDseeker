@@ -84,7 +84,7 @@ class ObservedDiscoveryTests(unittest.TestCase):
                     genomic_insertion_pos=28034000,chr='chr13')},directory,directory,
                 pd.DataFrame([dict(peak_alias='ITD_OBS_1',consensus_seq='ACGT'*3,
                     discovery_note='Distinct biological clones are not established.')]))
-            self.assertIn('clones are not established',
+            self.assertIn('does not establish separate clones',
                           (Path(directory)/'test_itd_report.html').read_text())
 
     def test_vcf_preserves_junction_uncertainty(self):

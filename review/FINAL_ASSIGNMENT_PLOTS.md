@@ -1,5 +1,11 @@
 # Main plots from final competitive assignments
 
+Report cleanup: only the full read-length view plus its ITD zoom is embedded.
+The redundant net-length image remains a saved diagnostic artifact. Generic
+discovery/anchor/identity annotations remain in audit TSV/VCF, while the HTML
+shows a short sequence-uncertainty note only when relevant. Sequence and technical
+images are collapsed, and plot legends use readable size/AF/support labels.
+
 The previous plots kept GMM-derived candidate distributions and added final call
 markers. That could leave a rejected/mixed H2 cluster labelled "not reported"
 while rescued 45 bp sequences were reported. The global insertion histogram also
@@ -14,9 +20,9 @@ Main plots are now regenerated at the end from the final validation table:
 3. Draw actual 1 bp histogram bins separately for each final allele. The full
    read-length panel includes WT; its zoom contains reported ITD reads only.
    Same-size alternatives have separate colors and line styles, with size A/B,
-   AF, count and stable ID in the legends. No Gaussian is invented or fitted.
+   AF and supporting read counts in the legends. Record IDs remain in collapsed sequence details. No Gaussian is invented or fitted.
 4. The second plot uses **actual trimmed read length minus WT reference length**.
-   This is a measured net read-length change, not an extracted insertion event.
+   This saved diagnostic is a measured net read-length change, not an extracted insertion event.
    Dotted markers show exact consensus-called insertion sizes. Sequencing indels
    and trimming can move observed histogram peaks away from those sizes.
 

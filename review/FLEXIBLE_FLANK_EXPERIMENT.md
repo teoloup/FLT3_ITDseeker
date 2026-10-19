@@ -56,8 +56,8 @@ necessarily exact complete observed flanks. `exact_interior_reads`,
 Adjacent duplication identity is retained as an annotation and no longer has an
 80% acceptance cutoff. A recurrent low-identity pure insertion can therefore be
 proposed. This alone does not establish a tandem-duplication mechanism. Identity
-and flank-normalization support propagate into consensus candidate metadata and
-HTML; VCF fields are `DUP_IDENTITY` and `FLANK_NORMALIZED_READS`. These describe
+and flank-normalization support remain in consensus candidate metadata and audit
+TSV; VCF fields are `DUP_IDENTITY` and `FLANK_NORMALIZED_READS`. These describe
 seed evidence, not all reads recruited by competitive validation.
 
 Recurrence >=20, at least two observations per strand, median whole-read Q20,
@@ -115,8 +115,8 @@ and 3/2 anchor-normalized observations. The 48 bp seed has 92 observations,
 89 with exact flanks and three normalized.
 
 The exported 48 bp and stronger 45 bp VCF calls carry `DUP_IDENTITY=1.0000` and
-`0.9778`, respectively, and `FLANK_NORMALIZED_READS=3`. HTML explains normalization
-and the annotation-only identity score. `flexible_anchor_integration.json` records
+`0.9778`, respectively, and `FLANK_NORMALIZED_READS=3`. The main HTML keeps only essential sequence uncertainty; normalization
+and identity details remain in audit TSV/VCF. `flexible_anchor_integration.json` records
 the aggregate verification, commands and single-run metrics; raw read IDs and
 sequences are excluded. The integration took 112.29 s, with largest-process RSS
 753.2 MiB; this single run is not a matched full-pipeline performance benchmark.

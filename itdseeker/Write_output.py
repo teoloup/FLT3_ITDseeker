@@ -303,7 +303,6 @@ def generate_itd_html_report(
 
     n_itds = len(summary_df) if summary_df is not None else 0
     gmm_plot = img_to_base64(os.path.join(plots_dir, f"{sample_name}_itd_gmm_fit_plot.png"))
-    size_plot = img_to_base64(os.path.join(plots_dir, f"{sample_name}_itd_size_distribution.png"))
     candidate_gmm_plot = img_to_base64(os.path.join(plots_dir, f"{sample_name}_candidate_gmm_fit_plot.png"))
 
     cons_by_alias = {}
@@ -323,6 +322,17 @@ def generate_itd_html_report(
 
     # ---------------------------------------------------------------- cards --
     cards = []
+    uncertainty_sizes=set()
+    size_counts={}
+    for row in summary_df.itertuples() if n_itds else []:
+        size=itd_refs.get(str(row.ref_alias),{}).get('itd_length',0)
+        size_counts[size]=size_counts.get(size,0)+1
+    display_names={}
+    for size in sorted(size_counts):
+        aliases=sorted(str(r.ref_alias) for r in summary_df.itertuples()
+                       if itd_refs.get(str(r.ref_alias),{}).get('itd_length',0)==size)
+        for index,alias in enumerate(aliases):
+            display_names[alias]=f'{size} bp'+(' '+chr(ord('A')+index) if len(aliases)>1 else '')
     for _, row in (summary_df.iterrows() if n_itds else []):
         alias = str(row["ref_alias"])
         info = itd_refs.get(alias, {})
@@ -333,7 +343,6 @@ def generate_itd_html_report(
         af = float(row.get("allele_frequency", 0.0))
         dp = int(row.get("n_total_reads", 0) or 0)
         alt_n = int(row.get("n_itd_reads", 0) or 0)
-        ref_n = max(dp - alt_n, 0)
         plus = row.get("plus_reads", 0)
         minus = row.get("minus_reads", 0)
         pval = row.get("fisher_p", None)
@@ -342,14 +351,13 @@ def generate_itd_html_report(
         cons = cons_by_alias.get(alias)
         n_count = int(cons["consensus_seq"].count("N")) if cons is not None else itd_seq.count("N")
         amb_note = ""
-        if cons is not None and isinstance(cons.get('discovery_note'), str):
-            amb_note = '<div class="note warnbox">' + escape(cons['discovery_note']) + '</div>'
+        discovery_note=cons.get('discovery_note') if cons is not None else info.get('discovery_note')
+        if isinstance(discovery_note,str) and 'clones are not established' in discovery_note.lower():
+            uncertainty_sizes.add(itd_len)
         if n_count:
             amb_note = (
                 f'<div class="note warnbox"><b>{n_count} ambiguous base'
-                f'{"" if n_count == 1 else "s"} (N)</b> in this consensus. The reads '
-                f'behind this peak disagree, which usually means more than one ITD of '
-                f'the same length is present and has not been separated.</div>'
+                f'{"" if n_count == 1 else "s"} (N)</b> in the reported sequence.</div>'
             )
 
         flags = []
@@ -359,13 +367,11 @@ def generate_itd_html_report(
             flags.append(('warn', f'only {alt_n} supporting reads'))
         if strand_bias_is_real(orr, pval, plus, minus):
             flags.append(('warn', 'strand bias'))
-        if af < 0.02:
-            flags.append(('info', 'low allele frequency'))
         if itd_len % 3:
             flags.append(('info', 'frameshift'))
         flag_html = "".join(
             f'<span class="flag {k}">{t}</span>' for k, t in flags
-        ) or '<span class="flag ok">no flags</span>'
+        )
 
         in_frame = (itd_len % 3 == 0)
         frame_txt = ("in frame" if in_frame else
@@ -378,71 +384,49 @@ def generate_itd_html_report(
         pileup = img_to_base64(os.path.join(plots_dir, f"{sample_name}_{alias}_pileup.png"))
         plots = ""
         if pileup:
-            plots += (f'<figure><figcaption>Earlier candidate-stage insertion observations, one row each, with the '
-                      f'inserted bases marked and coloured by strand. A clean vertical '
-                      f'edge means these discovery reads placed the insertion at the same position. '
-                      f'These are not the final assigned support counts; use the final distributions above for those.'
+            plots += (f'<figure><figcaption>Candidate read alignments, before final read assignment.'
                       f'</figcaption><img class="compact" src="{pileup}" alt="{alias} read pileup"></figure>')
         if ref_plot:
             plots += (f'<figure><figcaption>Position within FLT3</figcaption>'
                       f'<img src="{ref_plot}" alt="{alias} genomic context"></figure>')
         if msa_plot:
-            plots += (f'<figure><figcaption>Consensus agreement across the insertion: '
-                      f'bars show the share of reads backing each called base, rows the '
-                      f'most abundant aligned alleles with only their differences printed '
-                      f'(an allele can also differ outside the region shown). A difference '
-                      f'shared by many reads suggests a second haplotype.'
+            plots += (f'<figure><figcaption>Sequence agreement in the earlier candidate analysis.'
                       f'</figcaption>'
                       f'<img src="{msa_plot}" alt="{alias} consensus coverage"></figure>')
 
         cards.append(f"""
 <section class="card">
   <header class="cardhead">
-    <h3>{alias}</h3>
-    <div class="chips">
-      <span class="chip">{itd_len} bp</span>
-      <span class="chip">{frame_txt}</span>
-      <span class="chip mono">{chrom}:{_fmt_int(gpos)}</span>
-    </div>
+    <h3>{display_names.get(alias,str(itd_len)+' bp')}</h3>
   </header>
-  <div class="flags">{flag_html}</div>
+  {f'<div class="flags">{flag_html}</div>' if flag_html else ''}
 
   <div class="grid">
     <div class="metric">
       <div class="label">Allele frequency</div>
       <div class="value big">{af * 100:.2f}<span class="unit">%</span></div>
       {_af_bar(af)}
-      <div class="muted">{_fmt_int(alt_n)} of {_fmt_int(dp)} classified reads</div>
     </div>
     <div class="metric">
       <div class="label">Read support</div>
-      <div class="value">{_fmt_int(alt_n)}<span class="unit"> ITD</span></div>
-      <div class="muted">{_fmt_int(ref_n)} reference-supporting</div>
-      <div class="muted">depth {_fmt_int(dp)}</div>
-    </div>
-    <div class="metric">
-      <div class="label">Strand balance</div>
-      <div class="value small">{_strand_cell(plus, minus, pval, orr)}</div>
+      <div class="value">{_fmt_int(alt_n)}<span class="unit"> reads</span></div>
     </div>
   </div>
 
   {amb_note}
 
-  <details open>
-    <summary>Inserted sequence &mdash; {itd_len} bp</summary>
+  <details>
+    <summary>Sequence details</summary>
     <div class="note">
-      Shown on the <b>plus strand of {chrom}</b>, matching the VCF. FLT3 is
-      transcribed from the minus strand, so this is the reverse complement of the
-      coding sequence.
+      Reference (+) strand · {chrom}:{_fmt_int(gpos)} · {frame_txt}
     </div>
     <div class="seqbox">{_wrap_seq(itd_seq)}</div>
     <div class="muted">
-      VCF ALT is this sequence prefixed by the reference base at
-      {chrom}:{_fmt_int(gpos)}.
+      Record ID: {escape(alias)}
     </div>
   </details>
 
-  {f'<div class="figures">{plots}</div>' if plots else ''}
+  {f'<details><summary>Technical images</summary><div class="figures">{plots}</div></details>' if plots else ''}
 </section>""")
 
     if not n_itds:
@@ -456,33 +440,17 @@ def generate_itd_html_report(
   </p>
 </section>""")
 
-    method_line = ""
-    if haplotype_method:
-        method_line = f'<div><dt>Haplotype method</dt><dd class="mono">{haplotype_method}</dd></div>'
-    rescue_line = ""
-    if rescue_note:
-        rescue_line = f'<div class="note warnbox">{rescue_note}</div>'
 
     overview = ""
     if gmm_plot:
-        overview += (f'<figure><figcaption>Final validated allele read-length distributions. '
-                     f'Colors and counts come from passed competitive read assignments, not earlier GMM clusters. '
-                     f'The full panel includes WT; the lower panel shows reported ITD reads only. '
-                     f'Same-size sequence alternatives have separate colors and legends; no Gaussian fit is drawn.</figcaption>'
+        overview += (f'<figure><figcaption>WT and reported ITDs above; ITD-only zoom below. '
+                     f'Labels show insertion sizes; read lengths can vary.</figcaption>'
                      f'<img src="{gmm_plot}" alt="Final validated allele read lengths"></figure>')
-    if size_plot:
-        overview += (f'<figure><figcaption>Observed net read-length change of final reported allele reads: '
-                     f'actual trimmed read length minus WT reference length. Dotted markers give the exact '
-                     f'called insertion sizes. Trimming and sequencing indels can move histogram peaks away '
-                     f'from those sizes; these values are not extracted per-read insertion events.</figcaption>'
-                     f'<img src="{size_plot}" alt="Final assigned reads: observed net length changes"></figure>')
     if candidate_gmm_plot:
-        overview += (f'<details><summary>Earlier-stage GMM candidate diagnostic (not final allele assignments)</summary>'
-                     f'<p>This discovery-stage fit can contain clusters later split, rescued or rejected. '
-                     f'Use the final validated distributions above for reported calls.</p>'
+        overview += (f'<details><summary>GMM diagnostic</summary>'
+                     f'<p>Earlier candidate analysis; the final results are shown above.</p>'
                      f'<img src="{candidate_gmm_plot}" alt="Earlier-stage GMM candidate fit"></details>')
 
-    used_pct = (100.0 * val_reads / seqio_reads) if seqio_reads else 0.0
 
     # One row per ITD, so a reader can take in the whole sample before reading
     # any individual card.
@@ -494,23 +462,22 @@ def generate_itd_html_report(
             inf = itd_refs.get(a, {})
             ln = inf.get("itd_length", 0)
             trs.append(
-                f'<tr><td class="mono">{a}</td>'
-                f'<td>{ln} bp</td>'
-                f'<td>{"in frame" if ln % 3 == 0 else "frameshift"}</td>'
-                f'<td class="mono">{inf.get("chr","chr13")}:{_fmt_int(inf.get("genomic_insertion_pos","n/a"))}</td>'
+                f'<tr><td>{display_names.get(a,str(ln)+" bp")}</td>'
                 f'<td class="num"><b>{float(row.get("allele_frequency",0))*100:.2f}%</b></td>'
                 f'<td class="num">{_fmt_int(row.get("n_itd_reads",0))}</td>'
-                f'<td class="num">{_fmt_int(row.get("n_total_reads",0))}</td></tr>'
+                f'</tr>'
             )
         summary_table = f"""
   <h2>Summary</h2>
   <section class="card">
     <table class="summary">
-      <thead><tr><th>ITD</th><th>Size</th><th>Frame</th><th>Position</th>
-        <th class="num">AF</th><th class="num">Reads</th><th class="num">Depth</th></tr></thead>
+      <thead><tr><th>ITD</th><th class="num">AF</th><th class="num">Supporting reads</th></tr></thead>
       <tbody>{''.join(trs)}</tbody>
     </table>
   </section>"""
+    uncertainty_line=''.join(f'<p class="note warnbox">{size} bp: Two supported sequence versions differ by one base; '
+                            f'this does not establish separate clones.</p>' for size in sorted(uncertainty_sizes))
+    af_depth=int(summary_df.get('n_total_reads',pd.Series([0])).max()) if n_itds else 0
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -624,38 +591,29 @@ def generate_itd_html_report(
       <div class="muted">{sample_name} &middot; {reference_genome} &middot; {timestamp}</div>
     </div>
     <div class="verdict {verdict_class}">{verdict}
-      {f'&middot; {n_itds} ITD' + ('' if n_itds == 1 else 's') if n_itds else ''}</div>
+      {f'&middot; {n_itds} sequence call' + ('' if n_itds == 1 else 's') if n_itds else ''}</div>
   </div>
 
   <dl class="meta">
-    <div><dt>Reads in region</dt><dd>{_fmt_int(seqio_reads)}</dd></div>
-    <div><dt>Passed to validation</dt><dd>{_fmt_int(val_reads)} <span class="muted">({used_pct:.1f}%)</span></dd></div>
-    <div><dt>ITDs reported</dt><dd>{n_itds}</dd></div>
-    <div><dt>Combined ITD burden</dt><dd>{total_af * 100:.2f}%</dd></div>
-    {method_line}
+    <div><dt>Reads analyzed</dt><dd>{_fmt_int(val_reads)}</dd></div>
+    <div><dt>Reads used for AF</dt><dd>{_fmt_int(af_depth)}</dd></div>
+    <div><dt>Reported sequences</dt><dd>{n_itds}</dd></div>
+    <div><dt>Total ITD AF</dt><dd>{total_af * 100:.2f}%</dd></div>
   </dl>
 
-  {rescue_line}
-
   {summary_table}
+  {uncertainty_line}
 
-  <h2>Size distributions</h2>
+  <h2>Read lengths</h2>
   <section class="card">
     <div class="figures">{overview or '<p class="muted">No overview plots were produced.</p>'}</div>
   </section>
 
-  <h2>Detected ITDs</h2>
+  <h2>Reported sequences</h2>
   {''.join(cards)}
 
   <p class="muted" style="margin-top:28px">
-    Allele frequency is the share of validated, classified reads assigned to this
-    ITD by competitive alignment against the wild-type and per-ITD references.
-    Strand balance compares this ITD plus/minus split against the wild-type split.
-    The odds ratio is the effect size (1.0 means no bias); the Fisher p-value
-    scales with depth, so on a deep amplicon a three-percentage-point difference
-    can reach p&lt;0.001 while being biologically meaningless. A bias flag needs
-    both: a significant p AND at least a three-fold skew in the odds, or a
-    variant seen on essentially one strand. Positions are 1-based on the plus strand.
+    AF is the percentage of reads used for AF that support each reported sequence.
   </p>
 </div>
 </body>

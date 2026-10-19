@@ -45,7 +45,7 @@ def _labels(calls):
         size=info['itd_len']
         suffix=' '+chr(ord('A')+seen[size]) if totals[size]>1 else ''
         seen[size]+=1
-        labels[alias]=f"{size:g} bp{suffix} | AF {info['af']*100:.3f}% | n={info['reads']:,}\n{alias}"
+        labels[alias]=f"{size:g} bp{suffix} | AF {info['af']*100:.3f}% | {info['reads']:,} reads"
     return labels
 
 
@@ -66,7 +66,7 @@ def _call_markers(ax,calls,offset):
     for size in sorted({info['itd_len'] for _,info in calls}):
         pos=offset+size
         ax.axvline(pos,color='#555555',ls=':',lw=1)
-        ax.text(pos, .98,f'{size:g} bp call',transform=ax.get_xaxis_transform(),
+        ax.text(pos, .98,f'{size:g} bp',transform=ax.get_xaxis_transform(),
                 rotation=90,ha='right',va='top',fontsize=7,
                 bbox=dict(facecolor='white',alpha=.75,edgecolor='none',pad=1))
 
@@ -100,12 +100,12 @@ def plot_final_call_distributions(frame, validated, out_dir, sample_name,
         _histogram(axes[1],values,zoom_bins,colors[alias],labels[alias],style)
     axes[0].axvline(wt_reference_length,color='black',ls=':',lw=1,
                     label=f'WT reference length: {wt_reference_length:g} bp')
-    axes[0].set_title(f'{sample_name}: final validated read-length distributions (WT + reported alleles)')
-    axes[1].set_title('Reported ITD reads only — final sequence assignments')
+    axes[0].set_title(f'{sample_name}: WT and reported ITDs')
+    axes[1].set_title('ITD reads — zoom')
     for ax in axes:
         _call_markers(ax,calls,wt_reference_length)
-        ax.set_xlabel('Actual trimmed read length (bp)')
-        ax.set_ylabel('Final supporting reads per 1 bp bin')
+        ax.set_xlabel('Trimmed read length (bp)')
+        ax.set_ylabel('Reads per 1 bp')
         ax.grid(alpha=.2)
         if ax is axes[0] or calls:
             ax.legend(loc='upper left',bbox_to_anchor=(1.01,1),fontsize=7)

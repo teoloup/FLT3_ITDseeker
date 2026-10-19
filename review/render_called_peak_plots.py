@@ -31,8 +31,7 @@ for sample,af in [('11528',.005),('13462',.005),('13462',.001)]:
     frame=final_support_lengths(validation,lengths,calls,len(wt.seq))
     plots=plot_final_call_distributions(frame,calls,directory,sample,len(wt.seq))
     images=''.join(f'<img alt="{label}" src="data:image/png;base64,{base64.b64encode(Path(path).read_bytes()).decode()}">'
-                   for label,path in [('Final supporting read lengths',plots['read_length_plot']),
-                                      ('Final supporting net read-length changes',plots['net_read_length_plot'])])
+                   for label,path in [('Read lengths and ITD zoom',plots['read_length_plot'])])
     cards.append(f'<section><h2>{sample} — reporting AF ≥ {af*100:g}%</h2>{images}</section>')
     print(sample,af,[(a,c['itd_len'],c['reads']) for a,c in calls.items()],flush=True)
 
@@ -41,15 +40,9 @@ target.write_text('''<!doctype html><html><meta charset="utf-8"><title>Final FLT
 <style>body{font:16px/1.5 system-ui;max-width:1250px;margin:30px auto;padding:0 20px;color:#203442}
 img{width:100%;height:auto}section{border-top:1px solid #ccc;margin-top:30px}h1,h2{color:#183b56}</style>
 <h1>Final FLT3 call plot previews</h1><p><a href="FLT3_fragment_recheck.html">Fragment recheck report</a></p>
-<p>Main histograms use actual trimmed lengths of reads that pass final competitive validation and support
-the displayed reported allele. The full panel includes WT; the zoom contains reported ITD reads only.
-The second plot shows actual trimmed read length minus the 336 bp WT reference, not extracted insertion
-events. Dotted markers show exact called insertion sizes (or WT reference plus those sizes in the full plot).
-Trimming and sequencing indels can shift observed histogram peaks away from exact called sizes.</p>
-<p>These previews reuse saved final competitive validation and retained FASTQ lengths matched by read ID.
-No GMM fitting, denoising or read alignment was repeated. No earlier GMM cluster assignments supply the main
-histogram counts. The two 45 bp sequences differ at one junction
-base; separate biological clones are not established. The 0.1% preview includes both alternatives;
-the 0.5% preview applies the original review reporting threshold. The caller default remains 5%.</p>
+<p>Each view shows WT and reported ITDs, followed by an ITD-only zoom.
+Labels give insertion size, AF and supporting reads.</p>
+<p>13462: Two supported 45 bp sequence versions differ by one base; this does not establish separate clones.
+The 0.1% AF view includes both versions. The 0.5% AF view includes the stronger version only.</p>
 '''+''.join(cards)+'</html>',encoding='utf-8')
 print(target,flush=True)

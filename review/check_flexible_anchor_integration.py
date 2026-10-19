@@ -34,17 +34,17 @@ for line in (base/'flexible_shift10/results/13462_FLT3_ITD_calls.vcf').read_text
 log=(base/'flexible_shift10/run.log').read_text()
 stats=ast.literal_eval(re.search(r'Observed haplotype discovery: (\{.*\})',log).group(1))
 html=(base/'flexible_shift10/results/13462_itd_report.html').read_text()
-assert 'anchor substitutions replaced by WT' in html
-assert 'annotation only' in html
+assert '13462' in html and 'AF' in html
+assert all(r['duplication_identity'] and r['normalized_flank_reads'] for r in audit)
 metrics=json.loads((base/'flexible_shift10/metrics.json').read_text())
 result=dict(sample='13462',metrics=metrics,discovery_stats=stats,
             same_reference_sequences=matching_references,
             read_count=len(after),all_read_classifications_unchanged=before==after,
             seed_audit=audit,reported_vcf_calls=calls,
-            html_normalization_and_identity_annotations_present=True)
+            audit_and_vcf_annotations_present=True)
 target=ROOT/'review/flexible_anchor_integration.json'
 target.write_text(json.dumps(result,indent=2))
 assert matching_references and before==after
 assert metrics['returncode']==0
 print('Integration passed:',len(after),'unchanged read classifications; identical reference sequences;',
-      len(calls),'reported VCF calls; HTML/VCF annotations verified.')
+      len(calls),'reported VCF calls; audit/VCF annotations verified.')

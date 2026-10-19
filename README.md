@@ -352,12 +352,15 @@ the zoom includes reported ITD reads only. Same-size alternatives have separate
 colors/dashes, with exact called size, AF, support count and stable ID in the legend.
 Earlier GMM clusters do not supply the main histogram counts.
 
-The second main plot shows actual trimmed read length minus the WT reference
+An additional saved diagnostic shows actual trimmed read length minus the WT reference
 length (336 bp), explicitly a net read-length change rather than an extracted
 per-read insertion event. Dotted markers retain exact called insertion sizes;
 trimming and sequencing indels can shift observed histogram peaks away from them.
 No observed read length is replaced by its expected consensus size. Genuine GMM
 fits remain a separate earlier-stage diagnostic, collapsed in the HTML report.
+The main report embeds only the full read-length view and ITD zoom, with size,
+AF, supporting reads and essential sequence uncertainty. Generic discovery,
+anchor-normalization and duplication-identity notes remain in audit TSV/VCF.
 See [FINAL_ASSIGNMENT_PLOTS.md](review/FINAL_ASSIGNMENT_PLOTS.md).
 
 Independent candidates also appear in the consensus table, validation FASTA, audit,
