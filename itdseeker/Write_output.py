@@ -96,6 +96,8 @@ def build_vcf_header(genome_build=None, chr_name="chr13"):
         '##INFO=<ID=ITD_LEN,Number=1,Type=Integer,Description="Length of ITD insertion">',
         '##INFO=<ID=INS_POS,Number=1,Type=Integer,Description="Insertion position on reference genome">',
         '##INFO=<ID=SEQUENCE_UNCERTAINTY,Number=0,Type=Flag,Description="Recurrent one-base junction alternatives; distinct biological clones are not established">',
+        '##INFO=<ID=DUP_IDENTITY,Number=1,Type=Float,Description="Adjacent duplication identity for observed seed; experimental annotation only, not an acceptance filter">',
+        '##INFO=<ID=FLANK_NORMALIZED_READS,Number=1,Type=Integer,Description="Observed seed reads with locator anchor substitutions replaced by WT; not called flank variants">',
         '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">',
         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Total depth">',
         '##FORMAT=<ID=AF,Number=1,Type=Float,Description="Allele frequency (validated)">',
@@ -190,6 +192,12 @@ def export_itd_vcf(summary_df, ref_dict, itd_refs, comps, output_path, genome_bu
         discovery_note = itd_refs[itd].get('discovery_note', '')
         if isinstance(discovery_note, str) and 'clones are not established' in discovery_note:
             info_str += ';SEQUENCE_UNCERTAINTY'
+        identity=itd_refs[itd].get('duplication_identity')
+        if identity is not None and pd.notna(identity):
+            info_str += f';DUP_IDENTITY={float(identity):.4f}'
+        normalized=itd_refs[itd].get('normalized_flank_reads')
+        if normalized is not None and pd.notna(normalized):
+            info_str += f';FLANK_NORMALIZED_READS={int(normalized)}'
 
         # --- FORMAT and SAMPLE ---
         gt = "0/1"

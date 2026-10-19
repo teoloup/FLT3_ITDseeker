@@ -1,5 +1,9 @@
 # Nano_ITDseeker (FLT3-ITD on Nanopore Reads)
 
+This is the separate `experiment/flexible-flank-rescue` development branch based
+on stable `fb9cae3`. Its experimental flank defaults and comparison results are
+documented in [FLEXIBLE_FLANK_EXPERIMENT.md](review/FLEXIBLE_FLANK_EXPERIMENT.md).
+
 `Nano_ITDseeker.py` detects and validates FLT3-ITD events from a BAM file of Nanopore reads.
 
 ## What The Program Does
@@ -302,17 +306,28 @@ attempted invocations, not successful completion or tool-version provenance.
 Replaying a DADA2 call requires its intermediate FASTQ to still exist.
 
 Unresolved consensus bases are rejected before candidate validation. A second,
-GMM-independent discovery pass now counts complete observed haplotypes between
-exact 15 bp outer WT anchors (positions 25:40 and len(WT)-36:len(WT)-21).
+GMM-independent discovery pass now counts recurrent observed interiors between
+20 bp locator anchors, shifted 10 bp toward both WT ends from the stable outer
+window, allowing three substitutions per anchor. On the 336 bp reference these
+are [15,35) and [305,325). `--observed-anchor-length`, `--observed-anchor-shift`, and
+`--observed-anchor-max-mismatches` configure the experiment; shift 15 uses [10,30)
+and [310,330). Indels are not part of anchor matching. Multiple plausible ordered
+anchor pairs are rejected. Matched anchor substitutions are normalized to WT and
+audited; the entire interior remains exact. Genuine differences inside the locator
+anchors are therefore not reported as flank variants.
 It covers WT-assigned and excluded reads before the no-ITD early exit, and can
 recover sequence seeds lost when a mixed cluster produces an unresolved consensus.
 It does not replace that consensus with an arbitrary majority base.
 
-By default a seed requires 20 exact observations, at least two on each strand,
+By default a seed requires 20 identical observed interiors, at least two on each strand,
 median whole-read Q20, and an exact decomposition explaining the complete net size increase
-as one pure insertion with at least 80% identity to an adjacent duplication.
-The reconstructed allele must exactly equal the observation: separate gaps,
-deletions and substitutions do not silently become short insertion calls.
+as one pure insertion. Adjacent duplication identity is an annotation rather than
+an acceptance filter on this branch. The reconstructed interior must exactly equal
+the observation: separate gaps, interior deletions and interior substitutions do
+not silently become short insertion calls. Anchor normalization is the explicit
+exception for locator differences, with exact-flank and normalized-flank counts
+kept separate in the audit. VCF `DUP_IDENTITY` and `FLANK_NORMALIZED_READS` describe
+observed seed evidence rather than all competitively recruited reads.
 `--min-observed-haplotype-reads` controls discovery recurrence separately from
 `--min-allele-frequency`, which still controls reporting after competitive
 validation. Defaults still report only AF >=5% and insertions >=12 bp.
@@ -329,7 +344,7 @@ sequence, acceptance/rejection reasons, duplicate aliases and candidate cap loss
 Same-size one-base junction alternatives remain separate sequence candidates with
 an explicit HTML/audit warning and VCF `SEQUENCE_UNCERTAINTY` flag that separate biological clones are not established.
 Their competition can leave reads ambiguous; do not interpret their individual AFs
-as independently established clone fractions. Exact anchors and recurrence gates
+as independently established clone fractions. Locator matching and recurrence gates
 intentionally miss some real low-support or noisy haplotypes. Both the GMM/read-length
 and insertion-size plots include a final-call panel after validation, showing every
 AF-filtered reported sequence with insertion size, AF and supporting reads. Same-size

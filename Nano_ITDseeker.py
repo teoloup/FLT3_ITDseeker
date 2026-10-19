@@ -12,7 +12,7 @@ from pathlib import Path
 from Bio.Seq import Seq
 
 from itdseeker.command_audit import configure_command_log
-from itdseeker.observed_haplotypes import discover_observed_haplotypes, add_observed_candidates, annotate_validation
+from itdseeker.observed_haplotypes import discover_observed_haplotypes, add_observed_candidates, annotate_validation, anchor_coordinates
 from itdseeker.bam_extractor import extract_flt3_reads
 from itdseeker.GMM_peaks import fit_gmm_itds, plot_gmm_itds
 from itdseeker.haplotype_split import BACKENDS, merge_duplicate_candidates, split_peaks, split_by_insertion_length
@@ -91,7 +91,13 @@ if __name__ == "__main__":
     parser.add_argument('--disable-observed-rescue', action='store_true',
                         help='Disable recurrent full observed haplotype discovery (for comparison).')
     parser.add_argument('--min-observed-haplotype-reads', type=int, default=20,
-                        help='Minimum exact observations for independent seed discovery (default: 20; reporting AF is separate).')
+                        help='Minimum identical observed interiors for seed discovery (default: 20; reporting AF is separate).')
+    parser.add_argument('--observed-anchor-length', type=int, default=20,
+                        help='Experimental locator anchor length in bp (default: 20).')
+    parser.add_argument('--observed-anchor-shift', type=int, default=10,
+                        help='Experimental shift toward both WT ends from the old outer window (default: 10 bp).')
+    parser.add_argument('--observed-anchor-max-mismatches', type=int, default=3,
+                        help='Maximum substitutions per locator anchor; indels are not allowed (default: 3).')
     parser.add_argument(
         "--max-itds-to-detect", type=int, default=6, help="Maximum number of ITD to validate and report (default: 6).",
     )
@@ -287,6 +293,12 @@ if __name__ == "__main__":
     # FLT3 reference amplicon and genomic coordinates used by the pipeline.
     DEFAULT_REF_WT = """CTGTACCTTTCAGCATTTTGACGGCAACCTGGATTGAGACTCCTGTTTTGCTAATTCCATAAGCTGTTGCGTTCATCACTTTTCCAAAAGCACCTGATCCTAGTACCTTCCCTGCAAAGACAAATGGTGAGTACGTGCATTTTAAAGATTTTCCAATGGAAAAGAAATGCTGCAGAAACATTTGGCACATTCCATTCTTACCAAACTCTAAATTTTCTCTTGGAAACTCCCATTTGAGATCATATTCATATTCTCTGAAATCAACGTAGAAGTACTCATTATCTGAGGAGCCGGTCACCTGTACCATCTGTAGCTGGCTTTCATACCTAAATTGCT"""
     ref_seq = Seq(DEFAULT_REF_WT)
+    try:
+        anchor_coordinates(len(ref_seq),args.observed_anchor_length,args.observed_anchor_shift)
+        if not 0 <= args.observed_anchor_max_mismatches < args.observed_anchor_length:
+            raise ValueError('Anchor mismatches must be >=0 and smaller than anchor length')
+    except ValueError as error:
+        parser.error(str(error))
 
     amplicon_coords = {
     "hg19": {"chr": "chr13", "start": 28608018, "end": 28608353},
@@ -347,7 +359,9 @@ if __name__ == "__main__":
             parser.error('--min-observed-haplotype-reads must be at least 3')
         observed_candidates, observed_audit, observed_stats = discover_observed_haplotypes(
             seqio_reads, ref_seq, min_size=min_itd_size, max_size=max_itd_length,
-            min_reads=args.min_observed_haplotype_reads)
+            min_reads=args.min_observed_haplotype_reads,
+            anchor_length=args.observed_anchor_length,anchor_shift=args.observed_anchor_shift,
+            anchor_max_mismatches=args.observed_anchor_max_mismatches)
         logger.info('Observed haplotype discovery: %s', observed_stats)
         pd.DataFrame(observed_audit).to_csv(
             flt3_data_folder / f'{sample_name}_observed_haplotype_audit.tsv', sep='\t', index=False)

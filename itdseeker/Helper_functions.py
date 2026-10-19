@@ -707,6 +707,8 @@ def build_itd_reference_per_peak(
             "chr": chr_name,
             "itd_length": itd_len,
             "discovery_note": row.get('discovery_note', ''),
+            "duplication_identity": row.get('duplication_identity', np.nan),
+            "normalized_flank_reads": row.get('normalized_flank_reads', np.nan),
         }
 
         # --- Visualization per ITD ---

@@ -1,5 +1,9 @@
 # Recurrent observed haplotype rescue
 
+Historical stable design and measurements at `fb9cae3`. This experimental branch
+overrides the anchor defaults and identity filter as described in
+[FLEXIBLE_FLANK_EXPERIMENT.md](FLEXIBLE_FLANK_EXPERIMENT.md).
+
 Baseline source: `080b9a7`. Implementation branch: `fix/observed-haplotype-rescue`.
 
 The two discovery failures share one rescue path. Before fitting the GMM, count

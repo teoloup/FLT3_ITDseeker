@@ -95,7 +95,10 @@ class ObservedDiscoveryTests(unittest.TestCase):
                 n_total_reads=100,n_itd_reads=10)]),
                 {'WT':dict(ref_seq_with_itd=WT), 'ITD_OBS_1':dict(chr='chr13',itd_length=12)},
                 {'ITD_OBS_1':dict(itd_seq='ACGT'*3,local_insertion_pos=210,
-                    genomic_insertion_pos=28034090,discovery_note=note)},
+                    genomic_insertion_pos=28034090,discovery_note=note,
+                    duplication_identity=.35,normalized_flank_reads=24)},
                 pd.DataFrame(columns=['peak_alias']),str(target),genome_build='hg38')
             line=target.read_text().splitlines()[-1]
             self.assertIn(';SEQUENCE_UNCERTAINTY',line)
+            self.assertIn(';DUP_IDENTITY=0.3500',line)
+            self.assertIn(';FLANK_NORMALIZED_READS=24',line)
