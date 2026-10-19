@@ -1,5 +1,4 @@
 import os
-import glob
 os.environ["MPLBACKEND"] = "Agg"       # disable any GUI backend
 os.environ["DISPLAY"] = ""             # make sure Tk can't open a window
 os.environ["TK_SILENCE_DEPRECATION"] = "1"
@@ -378,7 +377,7 @@ def generate_itd_html_report(
         frame_txt = ("in frame" if in_frame else
                      '<span class="warn">frameshift</span>')
 
-        msa_plot = img_to_base64(os.path.join(plots_dir, f"{sample_name}_{alias}_MSA_consensus.png"))
+        msa_plot = img_to_base64(os.path.join(plots_dir, f"{sample_name}_{alias}_final_support_MSA_consensus.png"))
         ref_plot = img_to_base64(
             os.path.join(plots_dir, f"{sample_name}_{alias}_itd_ref_{reference_genome}.png")
         )
@@ -391,7 +390,7 @@ def generate_itd_html_report(
             plots += (f'<figure><figcaption>Position within FLT3</figcaption>'
                       f'<img src="{ref_plot}" alt="{alias} genomic context"></figure>')
         if msa_plot:
-            plots += (f'<figure><figcaption>Multiple sequence alignment (MSA) and consensus agreement from candidate analysis.'
+            plots += (f'<figure><figcaption>Multiple sequence alignment (MSA) of this reported sequence?s final supporting reads. The figure states the represented read count and panel limit.'
                       f'</figcaption>'
                       f'<img src="{msa_plot}" alt="{alias} consensus coverage"></figure>')
 
@@ -473,30 +472,25 @@ def generate_itd_html_report(
             inf = itd_refs.get(a, {})
             ln = inf.get("itd_length", 0)
             trs.append(
-                f'<tr><td>{display_names.get(a,str(ln)+" bp")}</td>'
+                f'<tr><td class="mono">{a}</td>'
+                f'<td>{ln} bp</td>'
+                f'<td>{"in frame" if ln % 3 == 0 else "frameshift"}</td>'
+                f'<td class="mono">{inf.get("chr","chr13")}:{_fmt_int(inf.get("genomic_insertion_pos","n/a"))}</td>'
                 f'<td class="num"><b>{float(row.get("allele_frequency",0))*100:.2f}%</b></td>'
                 f'<td class="num">{_fmt_int(row.get("n_itd_reads",0))}</td>'
-                f'</tr>'
+                f'<td class="num">{_fmt_int(row.get("n_total_reads",0))}</td></tr>'
             )
         summary_table = f"""
   <h2>Summary</h2>
   <section class="card">
     <table class="summary">
-      <thead><tr><th>ITD</th><th class="num">AF</th><th class="num">Supporting reads</th></tr></thead>
+      <thead><tr><th>ITD</th><th>Size</th><th>Frame</th><th>Position</th>
+        <th class="num">AF</th><th class="num">Reads</th><th class="num">Depth</th></tr></thead>
       <tbody>{''.join(trs)}</tbody>
     </table>
   </section>"""
     uncertainty_line=''.join(f'<p class="note warnbox">{size} bp: Two supported sequence versions differ by one base; '
                             f'this does not establish separate clones.</p>' for size in sorted(uncertainty_sizes))
-    reported_aliases = set(summary_df['ref_alias'].astype(str)) if n_itds else set()
-    extra_msas = []
-    for msa_path in sorted(glob.glob(os.path.join(plots_dir, f"{sample_name}_*_MSA_consensus.png"))):
-        candidate_alias = os.path.basename(msa_path)[len(sample_name)+1:-len('_MSA_consensus.png')]
-        if candidate_alias not in reported_aliases:
-            extra_msas.append(f'<figure><figcaption>{escape(candidate_alias)}: earlier candidate MSA; not a final reported sequence.</figcaption><img src="{img_to_base64(msa_path)}" alt="{escape(candidate_alias)} candidate MSA"></figure>')
-    if extra_msas:
-        overview += '<details><summary>Additional candidate MSA plots</summary><div class="figures">' + ''.join(extra_msas) + '</div></details>'
-
     af_depth=int(summary_df.get('n_total_reads',pd.Series([0])).max()) if n_itds else 0
 
     html = f"""<!DOCTYPE html>

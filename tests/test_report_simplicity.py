@@ -48,7 +48,7 @@ class ReportSimplicityTests(unittest.TestCase):
         self.assertNotIn('REDUNDANT_NET_IMAGE',report)
         self.assertNotIn('Observed net read-length change',report)
 
-    def test_requested_clinical_details_are_restored_without_changing_summary(self):
+    def test_requested_clinical_details_and_original_summary_are_restored(self):
         with tempfile.TemporaryDirectory() as folder, mock.patch(
                 'itdseeker.Write_output.img_to_base64',side_effect=lambda path: 'MSA_IMAGE' if path.endswith('_MSA_consensus.png') else ''):
             report=self.render(folder)
@@ -56,11 +56,13 @@ class ReportSimplicityTests(unittest.TestCase):
                      'Strand balance', '73 + / 64 -', '20,457 reads used for AF',
                      'ITDs reported', 'Haplotype method', 'dada2', 'Multiple sequence alignment (MSA)', 'MSA_IMAGE']:
             self.assertIn(text,report)
-        self.assertIn('<thead><tr><th>ITD</th><th class="num">AF</th><th class="num">Supporting reads</th></tr></thead>',report)
 
-    def test_unreported_candidate_msa_is_identified_as_earlier_stage(self):
+        for column in ['ITD','Size','Frame','Position','AF','Reads','Depth']:
+            self.assertRegex(report,r'<th(?: class="num")?>'+column+'</th>')
+
+    def test_prior_candidate_msa_is_not_used_for_final_call(self):
         with tempfile.TemporaryDirectory() as folder:
             Path(folder,'test_ITD_1_H2_MSA_consensus.png').write_bytes(b'candidate msa')
             report=self.render(folder)
-        self.assertIn('ITD_1_H2: earlier candidate MSA; not a final reported sequence.',report)
-        self.assertIn('Additional candidate MSA plots',report)
+        self.assertNotIn('Additional candidate MSA plots',report)
+        self.assertNotIn('candidate msa',report)

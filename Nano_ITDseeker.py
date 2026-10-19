@@ -12,6 +12,7 @@ from pathlib import Path
 from Bio.Seq import Seq
 
 from itdseeker.command_audit import configure_command_log
+from itdseeker.final_support_msa import plot_final_support_msas
 from itdseeker.final_call_plots import final_support_lengths, plot_final_call_distributions
 from itdseeker.observed_haplotypes import discover_observed_haplotypes, add_observed_candidates, annotate_validation, anchor_coordinates
 from itdseeker.bam_extractor import extract_flt3_reads
@@ -770,6 +771,9 @@ if __name__ == "__main__":
     export_itd_vcf(summary_df, ref_dict, itd_refs, comps, output_path, genome_build=genome)
 
     if html_report:
+        plot_final_support_msas(validation_results,
+            {str(r.read_id):r.read_seq for r in val_reads.itertuples()},
+            summary_df, itd_refs, flt3_data_folder, sample_name, threads=threads)
         generate_itd_html_report(
             sample_name=sample_name,
             reference_genome=genome,

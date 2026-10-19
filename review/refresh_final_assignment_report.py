@@ -1,6 +1,7 @@
 """Refresh main plots and the SAME saved report from final validation records.
 
-No candidate discovery, sequence alignment, AF change or VCF rewrite is performed.
+No candidate discovery, validation alignment, AF change or VCF rewrite is performed.
+Report-only MSAs use the retained final supporting reads.
 Actual trimmed read lengths come from the retained FASTQ, matched by read ID.
 """
 import argparse
@@ -13,6 +14,7 @@ from Bio import SeqIO
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
+from itdseeker.final_support_msa import plot_final_support_msas
 from itdseeker.final_call_plots import final_support_lengths, plot_final_call_distributions
 from itdseeker.Helper_functions import calculate_allele_frequencies_and_strand_bias
 from itdseeker.GMM_peaks import plot_gmm_itds
@@ -53,6 +55,8 @@ for _,row in consensus.iterrows():
                     discovery_note=row.get('discovery_note',''),
                     duplication_identity=row.get('duplication_identity'),
                     normalized_flank_reads=row.get('normalized_flank_reads'))
+sequences_by_read={r.id:str(r.seq) for r in SeqIO.parse(str(audit/'fastq/trimmed.fastq'),'fastq')}
+plot_final_support_msas(validation,sequences_by_read,summary,refs,data,sample)
 generate_itd_html_report(sample,'hg38',len(read_lengths),len(validation),summary,refs,
                          str(results),str(data),consensus,haplotype_method='dada2')
 record=dict(sample=sample,mode=args.mode,min_af=args.min_af,wt_reference_length=wt_length,

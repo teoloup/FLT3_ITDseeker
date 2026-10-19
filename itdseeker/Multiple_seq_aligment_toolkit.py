@@ -253,6 +253,7 @@ def plot_consensus_agreement(
     wrap=100,
     max_alleles=8,
     dpi=150,
+    title_note=None,
 ):
     """Per-base agreement across one ITD's consensus, for the HTML report.
 
@@ -299,8 +300,10 @@ def plot_consensus_agreement(
         "Rows: the most abundant aligned alleles, '·' where they match the consensus, "
         "'+' for bases it lacks.",
     ]
+    if title_note:
+        title.insert(0, title_note)
     if width >= 12:
-        title = [title[0], f"{title[1]} {title[2]}"]
+        title = title[:-2] + [f"{title[-2]} {title[-1]}"]
     title_in = 0.2 + 0.17 * len(title)
     fig_h = title_in + 0.25 + len(blocks) * (1.1 + 0.16 * n_rows)
 

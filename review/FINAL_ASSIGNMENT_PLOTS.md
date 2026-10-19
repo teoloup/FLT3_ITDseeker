@@ -1,3 +1,16 @@
+The summary table again includes ITD record ID, size, frame, chromosome position,
+AF, supporting reads and depth. Each reported allele has its own final-support
+MSA in its technical images. These are generated from that allele's passed,
+explicit ITD-supporting assignments, rather than a prior mixed GMM candidate.
+The report-only alignment uses up to 100 distinct full-read sequences, selected
+by recurrence to represent up to 95% of support; counts weight the MSA. Only the
+insertion window and 12 flanking bases are aligned in the displayed MSA after
+a diagnostic mapping to the called reference. The reference locates the window
+but contributes no votes. Titles give represented/total support and the panel
+limit; x positions count the displayed window including flanks. Calls and AF
+are unchanged. Local `*_final_support_msa_membership.json` files retain exact
+assignment/panel membership; the tracked check contains aggregate counts only.
+
 # Main plots from final competitive assignments
 
 Report cleanup: only the full read-length view plus its ITD zoom is embedded.
