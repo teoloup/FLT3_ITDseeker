@@ -17,7 +17,7 @@ class ReportSimplicityTests(unittest.TestCase):
                                    n_itd_reads=137,plus_reads=73,minus_reads=64)])
         refs={'ITD_OBS_A':dict(itd_seq='A'*45,itd_length=45,genomic_insertion_pos=28034116,chr='chr13')}
         consensus=pd.DataFrame([dict(peak_alias='ITD_OBS_A',consensus_seq='A'*45,discovery_note=note)])
-        path=generate_itd_html_report('test','hg38',22115,22115,summary,refs,folder,folder,consensus)
+        path=generate_itd_html_report('test','hg38',22115,22115,summary,refs,folder,folder,consensus,haplotype_method='dada2')
         return Path(path).read_text()
 
     def test_generic_discovery_mechanisms_are_not_shown(self):
@@ -47,3 +47,20 @@ class ReportSimplicityTests(unittest.TestCase):
         self.assertEqual(report.count('PRIMARY_READ_LENGTH_IMAGE'),1)
         self.assertNotIn('REDUNDANT_NET_IMAGE',report)
         self.assertNotIn('Observed net read-length change',report)
+
+    def test_requested_clinical_details_are_restored_without_changing_summary(self):
+        with tempfile.TemporaryDirectory() as folder, mock.patch(
+                'itdseeker.Write_output.img_to_base64',side_effect=lambda path: 'MSA_IMAGE' if path.endswith('_MSA_consensus.png') else ''):
+            report=self.render(folder)
+        for text in ['<span class="chip">45 bp</span>', 'in frame', 'chr13:28,034,116',
+                     'Strand balance', '73 + / 64 -', '20,457 reads used for AF',
+                     'ITDs reported', 'Haplotype method', 'dada2', 'Multiple sequence alignment (MSA)', 'MSA_IMAGE']:
+            self.assertIn(text,report)
+        self.assertIn('<thead><tr><th>ITD</th><th class="num">AF</th><th class="num">Supporting reads</th></tr></thead>',report)
+
+    def test_unreported_candidate_msa_is_identified_as_earlier_stage(self):
+        with tempfile.TemporaryDirectory() as folder:
+            Path(folder,'test_ITD_1_H2_MSA_consensus.png').write_bytes(b'candidate msa')
+            report=self.render(folder)
+        self.assertIn('ITD_1_H2: earlier candidate MSA; not a final reported sequence.',report)
+        self.assertIn('Additional candidate MSA plots',report)

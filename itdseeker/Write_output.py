@@ -1,4 +1,5 @@
 import os
+import glob
 os.environ["MPLBACKEND"] = "Agg"       # disable any GUI backend
 os.environ["DISPLAY"] = ""             # make sure Tk can't open a window
 os.environ["TK_SILENCE_DEPRECATION"] = "1"
@@ -375,7 +376,7 @@ def generate_itd_html_report(
 
         in_frame = (itd_len % 3 == 0)
         frame_txt = ("in frame" if in_frame else
-                     f'<span class="warn">out of frame ({itd_len % 3})</span>')
+                     '<span class="warn">frameshift</span>')
 
         msa_plot = img_to_base64(os.path.join(plots_dir, f"{sample_name}_{alias}_MSA_consensus.png"))
         ref_plot = img_to_base64(
@@ -390,7 +391,7 @@ def generate_itd_html_report(
             plots += (f'<figure><figcaption>Position within FLT3</figcaption>'
                       f'<img src="{ref_plot}" alt="{alias} genomic context"></figure>')
         if msa_plot:
-            plots += (f'<figure><figcaption>Sequence agreement in the earlier candidate analysis.'
+            plots += (f'<figure><figcaption>Multiple sequence alignment (MSA) and consensus agreement from candidate analysis.'
                       f'</figcaption>'
                       f'<img src="{msa_plot}" alt="{alias} consensus coverage"></figure>')
 
@@ -398,6 +399,11 @@ def generate_itd_html_report(
 <section class="card">
   <header class="cardhead">
     <h3>{display_names.get(alias,str(itd_len)+' bp')}</h3>
+    <div class="chips">
+      <span class="chip">{itd_len} bp</span>
+      <span class="chip">{frame_txt}</span>
+      <span class="chip mono">{chrom}:{_fmt_int(gpos)}</span>
+    </div>
   </header>
   {f'<div class="flags">{flag_html}</div>' if flag_html else ''}
 
@@ -409,7 +415,12 @@ def generate_itd_html_report(
     </div>
     <div class="metric">
       <div class="label">Read support</div>
-      <div class="value">{_fmt_int(alt_n)}<span class="unit"> reads</span></div>
+      <div class="value">{_fmt_int(alt_n)}<span class="unit"> ITD reads</span></div>
+      <div class="muted">{_fmt_int(dp)} reads used for AF</div>
+    </div>
+    <div class="metric">
+      <div class="label">Strand balance</div>
+      <div class="value small">{_strand_cell(plus, minus, pval, orr)}</div>
     </div>
   </div>
 
@@ -477,6 +488,15 @@ def generate_itd_html_report(
   </section>"""
     uncertainty_line=''.join(f'<p class="note warnbox">{size} bp: Two supported sequence versions differ by one base; '
                             f'this does not establish separate clones.</p>' for size in sorted(uncertainty_sizes))
+    reported_aliases = set(summary_df['ref_alias'].astype(str)) if n_itds else set()
+    extra_msas = []
+    for msa_path in sorted(glob.glob(os.path.join(plots_dir, f"{sample_name}_*_MSA_consensus.png"))):
+        candidate_alias = os.path.basename(msa_path)[len(sample_name)+1:-len('_MSA_consensus.png')]
+        if candidate_alias not in reported_aliases:
+            extra_msas.append(f'<figure><figcaption>{escape(candidate_alias)}: earlier candidate MSA; not a final reported sequence.</figcaption><img src="{img_to_base64(msa_path)}" alt="{escape(candidate_alias)} candidate MSA"></figure>')
+    if extra_msas:
+        overview += '<details><summary>Additional candidate MSA plots</summary><div class="figures">' + ''.join(extra_msas) + '</div></details>'
+
     af_depth=int(summary_df.get('n_total_reads',pd.Series([0])).max()) if n_itds else 0
 
     html = f"""<!DOCTYPE html>
@@ -597,7 +617,8 @@ def generate_itd_html_report(
   <dl class="meta">
     <div><dt>Reads analyzed</dt><dd>{_fmt_int(val_reads)}</dd></div>
     <div><dt>Reads used for AF</dt><dd>{_fmt_int(af_depth)}</dd></div>
-    <div><dt>Reported sequences</dt><dd>{n_itds}</dd></div>
+    <div><dt>ITDs reported</dt><dd>{n_itds}</dd></div>
+    {f'<div><dt>Haplotype method</dt><dd>{escape(str(haplotype_method))}</dd></div>' if haplotype_method else ''}
     <div><dt>Total ITD AF</dt><dd>{total_af * 100:.2f}%</dd></div>
   </dl>
 
