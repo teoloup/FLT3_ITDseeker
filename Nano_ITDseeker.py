@@ -12,6 +12,7 @@ from pathlib import Path
 from Bio.Seq import Seq
 
 from itdseeker.command_audit import configure_command_log
+from itdseeker.final_call_plots import final_support_lengths, plot_final_call_distributions
 from itdseeker.observed_haplotypes import discover_observed_haplotypes, add_observed_candidates, annotate_validation, anchor_coordinates
 from itdseeker.bam_extractor import extract_flt3_reads
 from itdseeker.GMM_peaks import fit_gmm_itds, plot_gmm_itds
@@ -456,7 +457,7 @@ if __name__ == "__main__":
             logger.debug(f" Peak {pid} ({len(reads)} reads): {reads[:5]}{'...' if len(reads) > 5 else ''}")
 
     #Plot the size distribution and the identified peaks 
-    plot_name = f"{sample_name}_itd_gmm_fit"
+    plot_name = f"{sample_name}_candidate_gmm_fit"
     out_prefix = os.path.join(flt3_data_folder, plot_name)
     all_read_lengths = [len(entry.get("seq", "")) for entry in seqio_reads.values()]
     plot_gmm_itds(
@@ -464,7 +465,7 @@ if __name__ == "__main__":
         comps=comps,
         assign_mode=peak_read_assignment_mode,
         out_prefix=out_prefix,
-        title="FLT3-ITD Read Length Distribution",
+        title="Earlier-stage GMM candidate discovery (before final sequence validation)",
         all_read_lengths=all_read_lengths,
     )
 
@@ -637,7 +638,7 @@ if __name__ == "__main__":
         plot_itd_size_distribution(
             all_itd_insertions=insertions_df,
             out_dir=flt3_data_folder,
-            sample_name=sample_name
+            sample_name=f'{sample_name}_candidate'
         )
 
     # Per-ITD read pileup: shows where each supporting read placed the insertion,
@@ -738,11 +739,8 @@ if __name__ == "__main__":
         pd.DataFrame(observed_audit).to_csv(
             flt3_data_folder / f'{sample_name}_observed_haplotype_audit.tsv', sep='\t', index=False)
 
-    # Redraw the read-length plot now that validation has run. The first pass
-    # (above) is drawn before any peak has been tested, so it necessarily shows
-    # peaks the pipeline later discards -- a peak that collects no validated
-    # reads, or falls under --min-allele-frequency, never reaches the VCF.
-    # Marking those keeps the plot and the VCF telling the same story.
+    # Main report profiles are rebuilt from final passed assignments and actual
+    # trimmed read lengths. Earlier candidate plots remain separate diagnostics.
     reported_aliases = set(summary_df["ref_alias"].astype(str)) if not summary_df.empty else set()
     itd_len_of = dict(zip(df_cons["peak_alias"].astype(str), df_cons["consensus_len"]))
     validated = {
@@ -750,20 +748,9 @@ if __name__ == "__main__":
                                itd_len=int(itd_len_of.get(str(r.ref_alias), 0)))
         for r in summary_df.itertuples()
     }
-    plot_gmm_itds(
-        reads_df=reads_df,
-        comps=comps,
-        assign_mode=peak_read_assignment_mode,
-        out_prefix=out_prefix,
-        title="FLT3-ITD Read Length Distribution",
-        reported_aliases=reported_aliases,
-        validated=validated,
-        all_read_lengths=all_read_lengths,
-        wt_reference_length=len(ref_seq),
-    )
-    plot_itd_size_distribution(
-        insertions_df, flt3_data_folder, sample_name=sample_name,
-        validated=validated, reported_aliases=reported_aliases)
+    plot_read_lengths={str(r.read_id):len(r.read_seq) for r in val_reads.itertuples()}
+    final_plot_reads=final_support_lengths(validation_results,plot_read_lengths,validated,len(ref_seq))
+    plot_final_call_distributions(final_plot_reads,validated,flt3_data_folder,sample_name,len(ref_seq))
     dropped = [
         str(a) for a in comps["peak_alias"].astype(str)
         if a.upper() != "WT" and a not in reported_aliases

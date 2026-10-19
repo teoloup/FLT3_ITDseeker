@@ -304,6 +304,7 @@ def generate_itd_html_report(
     n_itds = len(summary_df) if summary_df is not None else 0
     gmm_plot = img_to_base64(os.path.join(plots_dir, f"{sample_name}_itd_gmm_fit_plot.png"))
     size_plot = img_to_base64(os.path.join(plots_dir, f"{sample_name}_itd_size_distribution.png"))
+    candidate_gmm_plot = img_to_base64(os.path.join(plots_dir, f"{sample_name}_candidate_gmm_fit_plot.png"))
 
     cons_by_alias = {}
     if df_cons is not None and not df_cons.empty:
@@ -377,9 +378,10 @@ def generate_itd_html_report(
         pileup = img_to_base64(os.path.join(plots_dir, f"{sample_name}_{alias}_pileup.png"))
         plots = ""
         if pileup:
-            plots += (f'<figure><figcaption>Supporting reads, one row each, with the '
+            plots += (f'<figure><figcaption>Earlier candidate-stage insertion observations, one row each, with the '
                       f'inserted bases marked and coloured by strand. A clean vertical '
-                      f'edge means every read placed the insertion at the same position.'
+                      f'edge means these discovery reads placed the insertion at the same position. '
+                      f'These are not the final assigned support counts; use the final distributions above for those.'
                       f'</figcaption><img class="compact" src="{pileup}" alt="{alias} read pileup"></figure>')
         if ref_plot:
             plots += (f'<figure><figcaption>Position within FLT3</figcaption>'
@@ -463,14 +465,22 @@ def generate_itd_html_report(
 
     overview = ""
     if gmm_plot:
-        overview += (f'<figure><figcaption>Read-length distribution and fitted peaks. The lower '
-                     f'panel zooms in on the ITD region and labels each reported ITD with its '
-                     f'validated AF; peaks split by DADA2 or by insertion length share one '
-                     f'colour.</figcaption>'
-                     f'<img src="{gmm_plot}" alt="GMM fit"></figure>')
+        overview += (f'<figure><figcaption>Final validated allele read-length distributions. '
+                     f'Colors and counts come from passed competitive read assignments, not earlier GMM clusters. '
+                     f'The full panel includes WT; the lower panel shows reported ITD reads only. '
+                     f'Same-size sequence alternatives have separate colors and legends; no Gaussian fit is drawn.</figcaption>'
+                     f'<img src="{gmm_plot}" alt="Final validated allele read lengths"></figure>')
     if size_plot:
-        overview += (f'<figure><figcaption>Insertion sizes across reads</figcaption>'
-                     f'<img src="{size_plot}" alt="ITD size distribution"></figure>')
+        overview += (f'<figure><figcaption>Observed net read-length change of final reported allele reads: '
+                     f'actual trimmed read length minus WT reference length. Dotted markers give the exact '
+                     f'called insertion sizes. Trimming and sequencing indels can move histogram peaks away '
+                     f'from those sizes; these values are not extracted per-read insertion events.</figcaption>'
+                     f'<img src="{size_plot}" alt="Final assigned reads: observed net length changes"></figure>')
+    if candidate_gmm_plot:
+        overview += (f'<details><summary>Earlier-stage GMM candidate diagnostic (not final allele assignments)</summary>'
+                     f'<p>This discovery-stage fit can contain clusters later split, rescued or rejected. '
+                     f'Use the final validated distributions above for reported calls.</p>'
+                     f'<img src="{candidate_gmm_plot}" alt="Earlier-stage GMM candidate fit"></details>')
 
     used_pct = (100.0 * val_reads / seqio_reads) if seqio_reads else 0.0
 

@@ -345,16 +345,20 @@ Same-size one-base junction alternatives remain separate sequence candidates wit
 an explicit HTML/audit warning and VCF `SEQUENCE_UNCERTAINTY` flag that separate biological clones are not established.
 Their competition can leave reads ambiguous; do not interpret their individual AFs
 as independently established clone fractions. Locator matching and recurrence gates
-intentionally miss some real low-support or noisy haplotypes. Both the GMM/read-length
-and insertion-size plots include a final-call panel after validation, showing every
-AF-filtered reported sequence with insertion size, AF and supporting reads. Same-size
-junction alternatives occupy separate rows. Read histograms and GMM curves retain
-their original observation/fit meanings; rescued calls do not receive invented
-Gaussian fits or insertion observation counts. The complete-allele coordinate is
-the actual WT reference length (336 bp) plus insertion size; the insertion plot
-uses WT = 0 inserted bases. Fitted read-length means can differ because reads carry
-trimming differences and sequencing errors. Plots also render when rescue supplies
-all candidates and no GMM insertion observations remain.
+intentionally miss some real low-support or noisy haplotypes. Main report plots
+are built at the end from final passed read assignments, joined by read ID to
+actual trimmed read lengths. The full panel includes WT and reported alleles;
+the zoom includes reported ITD reads only. Same-size alternatives have separate
+colors/dashes, with exact called size, AF, support count and stable ID in the legend.
+Earlier GMM clusters do not supply the main histogram counts.
+
+The second main plot shows actual trimmed read length minus the WT reference
+length (336 bp), explicitly a net read-length change rather than an extracted
+per-read insertion event. Dotted markers retain exact called insertion sizes;
+trimming and sequencing indels can shift observed histogram peaks away from them.
+No observed read length is replaced by its expected consensus size. Genuine GMM
+fits remain a separate earlier-stage diagnostic, collapsed in the HTML report.
+See [FINAL_ASSIGNMENT_PLOTS.md](review/FINAL_ASSIGNMENT_PLOTS.md).
 
 Independent candidates also appear in the consensus table, validation FASTA, audit,
 VCF and HTML. `--disable-observed-rescue` supports matched comparisons.
@@ -362,6 +366,5 @@ See `review/CONSENSUS_VALIDATION.md` and `review/benchmark_observed_rescue.py`.
 
 Saved-data previews: [all called peaks](FRAGMENT_DATA/recheck_20261019/called_peak_plot_previews.html).
 Regenerate them inside the project container using `python review/render_called_peak_plots.py`;
-this reuses retained fits and validation rather than repeating alignments. Production
-plots use the current refined GMM tables; these previews explicitly identify the
-retained original fit before denoising.
+this reuses retained validation and FASTQ lengths rather than repeating alignments.
+To update the same retained sample report, use `review/refresh_final_assignment_report.py`.
