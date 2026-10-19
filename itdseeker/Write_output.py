@@ -7,6 +7,7 @@ import pandas as pd
 import logging
 import shutil
 import base64
+from html import escape
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,7 @@ def build_vcf_header(genome_build=None, chr_name="chr13"):
         '##INFO=<ID=STRAND_OR,Number=1,Type=Float,Description="Odds ratio of the ITD strand split against the WT split. 1.0 means no bias. This is the effect size that FISHER_P does not convey.">',
         '##INFO=<ID=ITD_LEN,Number=1,Type=Integer,Description="Length of ITD insertion">',
         '##INFO=<ID=INS_POS,Number=1,Type=Integer,Description="Insertion position on reference genome">',
+        '##INFO=<ID=SEQUENCE_UNCERTAINTY,Number=0,Type=Flag,Description="Recurrent one-base junction alternatives; distinct biological clones are not established">',
         '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">',
         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Total depth">',
         '##FORMAT=<ID=AF,Number=1,Type=Float,Description="Allele frequency (validated)">',
@@ -185,6 +187,9 @@ def export_itd_vcf(summary_df, ref_dict, itd_refs, comps, output_path, genome_bu
             "INS_POS": pos
         }
         info_str = ";".join(f"{k}={v}" for k, v in info_fields.items())
+        discovery_note = itd_refs[itd].get('discovery_note', '')
+        if isinstance(discovery_note, str) and 'clones are not established' in discovery_note:
+            info_str += ';SEQUENCE_UNCERTAINTY'
 
         # --- FORMAT and SAMPLE ---
         gt = "0/1"
@@ -328,6 +333,8 @@ def generate_itd_html_report(
         cons = cons_by_alias.get(alias)
         n_count = int(cons["consensus_seq"].count("N")) if cons is not None else itd_seq.count("N")
         amb_note = ""
+        if cons is not None and isinstance(cons.get('discovery_note'), str):
+            amb_note = '<div class="note warnbox">' + escape(cons['discovery_note']) + '</div>'
         if n_count:
             amb_note = (
                 f'<div class="note warnbox"><b>{n_count} ambiguous base'

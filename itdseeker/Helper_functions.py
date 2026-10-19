@@ -682,6 +682,7 @@ def build_itd_reference_per_peak(
             "genomic_insertion_pos": genomic_ins_pos,
             "chr": chr_name,
             "itd_length": itd_len,
+            "discovery_note": row.get('discovery_note', ''),
         }
 
         # --- Visualization per ITD ---

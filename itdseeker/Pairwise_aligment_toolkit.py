@@ -44,12 +44,19 @@ def _align_reads_chunk(reads_chunk, ref_dict, alpha=2.0):
     """
     aligner = build_validation_aligner()
     results = []
+    sequence_cache = {}
     logger.debug(f"[_align_reads_chunk] Starting chunk of {len(reads_chunk)} reads...")
 
     for rid, read_seq, read_strand in reads_chunk:
         if not read_seq or not isinstance(read_seq, str):
             logger.warning(f"[_align_reads_chunk] Skipping empty or invalid read {rid}")
             continue
+
+        if read_seq in sequence_cache:
+            results.extend(dict(row, read_id=rid, strand=read_strand)
+                           for row in sequence_cache[read_seq])
+            continue
+        result_start = len(results)
 
         best_alignments = []
         for alias, ref_entry in ref_dict.items():
@@ -86,6 +93,10 @@ def _align_reads_chunk(reads_chunk, ref_dict, alpha=2.0):
                 "aligned_blocks": aligned_blocks,
             })
 
+        # Bound per-worker cache memory; alignment metrics depend on sequence,
+        # while read ID and strand remain specific to each observation.
+        if len(sequence_cache) < 2048:
+            sequence_cache[read_seq] = results[result_start:]
         if len(results) % 1000 == 0:
             logger.debug(f"[_align_reads_chunk] Processed {len(results)} alignments so far...")
 

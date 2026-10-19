@@ -12,6 +12,7 @@ from pathlib import Path
 from Bio.Seq import Seq
 
 from itdseeker.command_audit import configure_command_log
+from itdseeker.observed_haplotypes import discover_observed_haplotypes, add_observed_candidates, annotate_validation
 from itdseeker.bam_extractor import extract_flt3_reads
 from itdseeker.GMM_peaks import fit_gmm_itds, plot_gmm_itds
 from itdseeker.haplotype_split import BACKENDS, merge_duplicate_candidates, split_peaks, split_by_insertion_length
@@ -87,6 +88,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--min-itd-size", type=int, default=12, help="Minimum ITD size (default: 12).",
     )
+    parser.add_argument('--disable-observed-rescue', action='store_true',
+                        help='Disable recurrent full observed haplotype discovery (for comparison).')
+    parser.add_argument('--min-observed-haplotype-reads', type=int, default=20,
+                        help='Minimum exact observations for independent seed discovery (default: 20; reporting AF is separate).')
     parser.add_argument(
         "--max-itds-to-detect", type=int, default=6, help="Maximum number of ITD to validate and report (default: 6).",
     )
@@ -336,6 +341,17 @@ if __name__ == "__main__":
     if not seqio_reads:
         finalize_no_itd("No FLT3 reads available after extraction/trimming.")
 
+    observed_candidates, observed_audit = [], []
+    if not args.disable_observed_rescue:
+        if args.min_observed_haplotype_reads < 3:
+            parser.error('--min-observed-haplotype-reads must be at least 3')
+        observed_candidates, observed_audit, observed_stats = discover_observed_haplotypes(
+            seqio_reads, ref_seq, min_size=min_itd_size, max_size=max_itd_length,
+            min_reads=args.min_observed_haplotype_reads)
+        logger.info('Observed haplotype discovery: %s', observed_stats)
+        pd.DataFrame(observed_audit).to_csv(
+            flt3_data_folder / f'{sample_name}_observed_haplotype_audit.tsv', sep='\t', index=False)
+
     try:
         gmm_fit = fit_gmm_itds(
             seqio_reads,
@@ -352,10 +368,19 @@ if __name__ == "__main__":
         )
     except RuntimeError as e:
         if "No GMM components passed filtering criteria" in str(e):
-            finalize_no_itd(str(e))
-        logger.error(f"GMM fitting failed: {e}")
-        logger.error("Aborting without writing negative (no-ITD) outputs.")
-        sys.exit(1)
+            if not observed_candidates:
+                finalize_no_itd(str(e))
+            from types import SimpleNamespace
+            logger.warning('No retained GMM components; continuing with observed candidates.')
+            gmm_fit = SimpleNamespace(gmm=None, peak_subsets={},
+                comps=pd.DataFrame(columns=['peak_alias','effective_read_count','mean_bp',
+                                            'sd_bp','fraction','effective_allele_freq']),
+                reads_df=pd.DataFrame(columns=['read_id','read_seq','read_len',
+                                              'strand','gmm_peak_alias','is_ambiguous']))
+        else:
+            logger.error(f"GMM fitting failed: {e}")
+            logger.error("Aborting without writing negative (no-ITD) outputs.")
+            sys.exit(1)
     except Exception as e:
         logger.error(f"GMM fitting failed: {e}")
         logger.error("Aborting without writing negative (no-ITD) outputs.")
@@ -400,11 +425,11 @@ if __name__ == "__main__":
         effective_method, comps, reads_df, peak_subsets
     )
 
-    if comps.empty:
+    if comps.empty and not observed_candidates:
         finalize_no_itd("No GMM peaks remained after refinement.")
 
     total_effective_reads = int(comps.get("effective_read_count", pd.Series(dtype=int)).fillna(0).sum())
-    if reads_df.empty or total_effective_reads == 0:
+    if (reads_df.empty or total_effective_reads == 0) and not observed_candidates:
         finalize_no_itd("No reads remained assigned to a valid GMM peak after filtering.")
 
     logger.debug("Fitted GMM components (filtered):")
@@ -433,7 +458,7 @@ if __name__ == "__main__":
         comps["peak_alias"].astype(str).str.upper() != "WT"
     ].copy()
     non_wt_comps = non_wt_comps.loc[non_wt_comps["effective_read_count"].fillna(0) > 0]
-    if non_wt_comps.empty:
+    if non_wt_comps.empty and not observed_candidates:
         finalize_no_itd("No ITD peaks were detected beyond the WT peak.")
         
 
@@ -522,10 +547,13 @@ if __name__ == "__main__":
     applied_method = effective_method
 
     insertions_df = extract_insertions(comps, reads_df, peak_subsets)
-    if insertions_df is None:
+    if insertions_df is None and not observed_candidates:
         finalize_no_itd("No ITD insertions were detected after peak processing.")
+    if insertions_df is None:
+        from itdseeker.Helper_functions import INSERTION_COLUMNS
+        insertions_df = pd.DataFrame(columns=INSERTION_COLUMNS)
 
-    if effective_method != "none":
+    if effective_method != "none" and not insertions_df.empty:
         # Insertion lengths are far sharper than read lengths, so two ITDs a few
         # bp apart that share one length peak separate here.
         refined, insertions_df = split_by_insertion_length(
@@ -540,7 +568,13 @@ if __name__ == "__main__":
         )
         comps, reads_df, peak_subsets = refined
 
-    df_cons = build_consensus(insertions_df, comps)
+    df_cons = build_consensus(insertions_df, comps) if not insertions_df.empty else pd.DataFrame()
+    consensus_aliases = set(df_cons.get('peak_alias', pd.Series(dtype=str)))
+    unresolved_aliases = set(insertions_df.get('peak_alias', pd.Series(dtype=str))) - consensus_aliases
+    pd.DataFrame([dict(peak_alias=a, status='no_resolved_consensus')
+                  for a in sorted(unresolved_aliases)],
+                 columns=['peak_alias','status']).to_csv(
+        flt3_data_folder / f'{sample_name}_unresolved_consensus_audit.tsv', sep='\t', index=False)
     # Two candidates with one allele would split that ITD's reads as ambiguous
     # between identical references in validation; merge them first.
     refined, insertions_df, df_cons = merge_duplicate_candidates(
@@ -553,6 +587,14 @@ if __name__ == "__main__":
         wt_amplicon_length=wt_amplicon_length,
     )
     comps, reads_df, peak_subsets = refined
+
+    df_cons = add_observed_candidates(df_cons, observed_candidates, observed_audit,
+                                      ref_seq, max_candidates=max_itds_detected,
+                                      reads_df=reads_df, unresolved_aliases=unresolved_aliases)
+    if observed_audit:
+        pd.DataFrame(observed_audit).to_csv(
+            flt3_data_folder / f'{sample_name}_observed_haplotype_audit.tsv', sep='\t', index=False)
+    df_cons.to_csv(flt3_data_folder / f'{sample_name}_itd_consensus_seq.tsv', sep='\t', index=False)
 
     n_total, n_worst, minor_worst = consensus_n_stats(df_cons)
     logger.info(
@@ -577,11 +619,12 @@ if __name__ == "__main__":
 
     # Create ITD size distribution plot.
     logger.info("Creating ITD size distribution plot...")
-    plot_itd_size_distribution(
-        all_itd_insertions=insertions_df,
-        out_dir=flt3_data_folder,
-        sample_name=sample_name
-    )
+    if not insertions_df.empty:
+        plot_itd_size_distribution(
+            all_itd_insertions=insertions_df,
+            out_dir=flt3_data_folder,
+            sample_name=sample_name
+        )
 
     # Per-ITD read pileup: shows where each supporting read placed the insertion,
     # which is how a reader tells a clean ITD from a peak holding two of them.
@@ -658,6 +701,8 @@ if __name__ == "__main__":
         finalize_no_itd("No reads available for validation alignment.")
 
     # Align reads to multi-FASTA in parallel
+    if val_reads.empty:
+        finalize_no_itd('No reads available in the selected validation read set.')
     logger.info("Aligning reads to multi-reference FASTA in parallel...")
     validation_results = align_reads_multi_ref_parallel(val_reads, ref_dict, df_cons, logger=logger, threads=threads)
     if validation_results is None or validation_results.empty:
@@ -673,6 +718,11 @@ if __name__ == "__main__":
     # Calculate allele frequencies and strand bias
     logger.info("Calculating allele frequencies and strand bias...")
     summary_df = calculate_allele_frequencies_and_strand_bias(validation_results, min_allele_frequency=min_allele_frequency)
+    if observed_audit:
+        annotate_validation(observed_audit, validation_results,
+                            set(summary_df.get('ref_alias', pd.Series(dtype=str))))
+        pd.DataFrame(observed_audit).to_csv(
+            flt3_data_folder / f'{sample_name}_observed_haplotype_audit.tsv', sep='\t', index=False)
     if summary_df.empty:
         finalize_no_itd("No ITDs passed validation and allele-frequency filtering.")
 

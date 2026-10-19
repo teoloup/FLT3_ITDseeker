@@ -27,3 +27,15 @@ review/runs/
 review/synthetic/
 .validation-r/
 review/tools/
+
+# Sequencing recheck inputs and per-read outputs stay local; retain small audits.
+FRAGMENT_DATA/*
+!FRAGMENT_DATA/recheck_20261019/
+FRAGMENT_DATA/recheck_20261019/*
+!FRAGMENT_DATA/recheck_20261019/FLT3_fragment_recheck.html
+!FRAGMENT_DATA/recheck_20261019/recheck_summary.tsv
+!FRAGMENT_DATA/recheck_20261019/parameter_rerun_calls.tsv
+!FRAGMENT_DATA/recheck_20261019/manifest.json
+review/fastq_51_57_analysis/
+review/observed_rescue_benchmark/
+review/*.log

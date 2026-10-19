@@ -301,6 +301,36 @@ Logs append across reruns and survive intermediate-file cleanup. They record
 attempted invocations, not successful completion or tool-version provenance.
 Replaying a DADA2 call requires its intermediate FASTQ to still exist.
 
-Unresolved consensus bases are rejected before candidate validation. This avoids
-reporting an ambiguous sequence as an ITD, but does not solve missing same-length
-haplotypes or their effect on AF. See `review/CONSENSUS_VALIDATION.md`.
+Unresolved consensus bases are rejected before candidate validation. A second,
+GMM-independent discovery pass now counts complete observed haplotypes between
+exact 15 bp outer WT anchors (positions 25:40 and len(WT)-36:len(WT)-21).
+It covers WT-assigned and excluded reads before the no-ITD early exit, and can
+recover sequence seeds lost when a mixed cluster produces an unresolved consensus.
+It does not replace that consensus with an arbitrary majority base.
+
+By default a seed requires 20 exact observations, at least two on each strand,
+median whole-read Q20, and an exact decomposition explaining the complete net size increase
+as one pure insertion with at least 80% identity to an adjacent duplication.
+The reconstructed allele must exactly equal the observation: separate gaps,
+deletions and substitutions do not silently become short insertion calls.
+`--min-observed-haplotype-reads` controls discovery recurrence separately from
+`--min-allele-frequency`, which still controls reporting after competitive
+validation. Defaults still report only AF >=5% and insertions >=12 bp.
+
+Accepted seeds are deduplicated against existing full candidate alleles and fit
+within `--max-itds-to-detect`. All accepted candidates compete with WT in the
+existing final alignment and gap validation; no extra full alignment per read is
+performed for discovery. Only recurrent seeds undergo exact decomposition. A bounded per-worker
+cache reuses final alignment metrics for duplicate sequences, retaining individual
+read IDs and strands. Additional references do add final alignment comparisons.
+
+`<sample>_observed_haplotype_audit.tsv` records exact support, complete net size,
+sequence, acceptance/rejection reasons, duplicate aliases and candidate cap losses.
+Same-size one-base junction alternatives remain separate sequence candidates with
+an explicit HTML/audit warning and VCF `SEQUENCE_UNCERTAINTY` flag that separate biological clones are not established.
+Their competition can leave reads ambiguous; do not interpret their individual AFs
+as independently established clone fractions. Exact anchors and recurrence gates
+intentionally miss some real low-support or noisy haplotypes. The GMM plot describes
+GMM candidates; independent candidates appear in the consensus table, validation
+FASTA, audit, VCF and HTML. `--disable-observed-rescue` supports matched comparisons.
+See `review/CONSENSUS_VALIDATION.md` and `review/benchmark_observed_rescue.py`.

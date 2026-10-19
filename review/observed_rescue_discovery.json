@@ -1,0 +1,150 @@
+[
+  {
+    "sample": "11528",
+    "stats": {
+      "total_reads": 11673,
+      "anchored_reads": 9969,
+      "unique_positive_windows": 2202,
+      "tested_seeds": 3,
+      "seconds": 0.11799646700001176
+    },
+    "seeds": [
+      {
+        "allele_id": "4d281216db24",
+        "net_size": 159,
+        "exact_reads": 347,
+        "plus": 164,
+        "minus": 183,
+        "median_q": 42.81135902636917
+      },
+      {
+        "allele_id": "1e9bf60eefba",
+        "net_size": 21,
+        "exact_reads": 117,
+        "plus": 56,
+        "minus": 61,
+        "median_q": 41.545197740113
+      },
+      {
+        "allele_id": "10cdfb62201f",
+        "net_size": 36,
+        "exact_reads": 47,
+        "plus": 16,
+        "minus": 31,
+        "median_q": 41.33783783783784
+      }
+    ]
+  },
+  {
+    "sample": "13462",
+    "stats": {
+      "total_reads": 22115,
+      "anchored_reads": 19283,
+      "unique_positive_windows": 2732,
+      "tested_seeds": 3,
+      "seconds": 0.1102266679999957
+    },
+    "seeds": [
+      {
+        "allele_id": "3c15c6f09c87",
+        "net_size": 48,
+        "exact_reads": 91,
+        "plus": 43,
+        "minus": 48,
+        "median_q": 41.06332453825858
+      },
+      {
+        "allele_id": "7c96248a9a16",
+        "net_size": 45,
+        "exact_reads": 57,
+        "plus": 30,
+        "minus": 27,
+        "median_q": 40.406332453825854
+      },
+      {
+        "allele_id": "dc12dbdced8d",
+        "net_size": 45,
+        "exact_reads": 31,
+        "plus": 15,
+        "minus": 16,
+        "median_q": 41.267195767195766
+      }
+    ]
+  },
+  {
+    "sample": "11551",
+    "stats": {
+      "total_reads": 21974,
+      "anchored_reads": 19202,
+      "unique_positive_windows": 4645,
+      "tested_seeds": 1,
+      "seconds": 0.23582932499994058
+    },
+    "seeds": [
+      {
+        "allele_id": "70ef7cf159e0",
+        "net_size": 15,
+        "exact_reads": 2965,
+        "plus": 1430,
+        "minus": 1535,
+        "median_q": 42.180758017492714
+      }
+    ]
+  },
+  {
+    "sample": "10808",
+    "stats": {
+      "total_reads": 15850,
+      "anchored_reads": 13788,
+      "unique_positive_windows": 3361,
+      "tested_seeds": 3,
+      "seconds": 0.22138768200011327
+    },
+    "seeds": [
+      {
+        "allele_id": "7ecbb00e6595",
+        "net_size": 45,
+        "exact_reads": 2864,
+        "plus": 1336,
+        "minus": 1528,
+        "median_q": 41.94881889763779
+      },
+      {
+        "allele_id": "953856ee2875",
+        "net_size": 66,
+        "exact_reads": 27,
+        "plus": 10,
+        "minus": 17,
+        "median_q": 41.40298507462686
+      },
+      {
+        "allele_id": "ef4df2eb3ebe",
+        "net_size": 27,
+        "exact_reads": 26,
+        "plus": 15,
+        "minus": 11,
+        "median_q": 42.268595041322314
+      }
+    ]
+  },
+  {
+    "sample": "12156",
+    "stats": {
+      "total_reads": 14921,
+      "anchored_reads": 12725,
+      "unique_positive_windows": 3074,
+      "tested_seeds": 1,
+      "seconds": 0.14781419900009496
+    },
+    "seeds": [
+      {
+        "allele_id": "1e9bf60eefba",
+        "net_size": 21,
+        "exact_reads": 1517,
+        "plus": 683,
+        "minus": 834,
+        "median_q": 41.27887323943662
+      }
+    ]
+  }
+]
