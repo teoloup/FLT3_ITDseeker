@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import logging
 import seaborn as sns
+from .call_plots import reported_calls, draw_call_panel
 from collections import Counter
 from typing import NamedTuple, Dict, List
 from sklearn.mixture import GaussianMixture
@@ -514,15 +515,17 @@ def plot_gmm_itds(
     reported_aliases=None,
     validated=None,
     all_read_lengths=None,
+    wt_reference_length=336,
     dpi=150
 ):
     """
     Plot read lengths with the fitted peaks, and a zoomed panel of the ITD region.
 
-    The top panel shows every read; the lower one zooms in on the ITD peaks,
-    which the WT peak otherwise flattens. Split peaks share one colour in
-    shades, with a note saying how they were split. Each ITD is labelled with
-    its reported AF when `validated` is given, so the plot and the VCF agree.
+    The top panel shows every read; an optional middle panel zooms into the
+    fitted ITD region. When `validated` is supplied, a separate final-call panel
+    includes every reported sequence, even without a retained GMM component.
+    Call positions are WT reference length + inserted bases, not fitted means.
+    Same-size alternatives have separate rows, with AF and read support.
 
     Parameters
     ----------
@@ -552,6 +555,8 @@ def plot_gmm_itds(
     all_read_lengths : array-like or None
         Lengths of every trimmed read, drawn behind the peak-assigned reads so
         the reads outside every peak stay visible.
+    wt_reference_length : int
+        Complete WT reference sequence length; independent of fitted WT mean.
     dpi : int
         Image resolution.
     """
@@ -561,22 +566,20 @@ def plot_gmm_itds(
 
 
     # --- Prepare data ---
-    if reads_df.empty or "read_len" not in reads_df.columns:
+    calls = reported_calls(validated, reported_aliases)
+    call_positions = [wt_reference_length + info['itd_len'] for _,info in calls]
+    if (reads_df.empty or "read_len" not in reads_df.columns) and (all_read_lengths is None or not len(all_read_lengths)):
         logger.warning("[plot_gmm_itds] No assigned reads available for plotting. Skipping GMM plot.")
         mpl_logger.setLevel(prev_level)
         return
 
-    x = reads_df["read_len"].to_numpy(dtype=float)
-    if x.size == 0:
-        logger.warning("[plot_gmm_itds] Read-length array is empty. Skipping GMM plot.")
-        mpl_logger.setLevel(prev_level)
-        return
+    x = reads_df["read_len"].to_numpy(dtype=float) if 'read_len' in reads_df else np.array([])
     x_all = (np.asarray(all_read_lengths, dtype=float)
              if all_read_lengths is not None and len(all_read_lengths) else x)
 
     n = len(x)
-    x_min = float(min(x.min(), x_all.min()))
-    x_max = float(max(x.max(), x_all.max()))
+    bounds = np.r_[x_all, call_positions]
+    x_min, x_max = float(bounds.min()), float(bounds.max())
     if bins is None:
         edges = np.arange(np.floor(x_min) - 0.5, np.ceil(x_max) + 1.5, 1.0)
     else:
@@ -616,7 +619,8 @@ def plot_gmm_itds(
         return pdf * n * bin_width * float(row["fraction"])
 
     def reported(alias):
-        return reported_aliases is None or is_wt[alias] or str(alias) in reported_aliases
+        return (reported_aliases is None or is_wt[alias] or str(alias) in reported_aliases
+                or any(str(call).startswith(str(alias)+'_H') for call in reported_aliases))
 
     def style(alias):
         if is_wt[alias]:
@@ -635,11 +639,14 @@ def plot_gmm_itds(
             text += f", GMM weight {float(row['fraction']) * 100:.1f}%, peak reads {eff * 100:.1f}%"
         if not reported(alias):
             text += "  [not reported]"
+        elif reported_aliases is not None and not is_wt[alias] and str(alias) not in reported_aliases:
+            text += "  [parent of reported call]"
         return text
 
     # A few very long reads would otherwise stretch the axis far past every peak.
     right = max([float(np.percentile(x_all, 99.5))]
-                + [float(r["mean_bp"]) + 4 * float(r["sd_bp"]) for _, r in rows]) + 5
+                + [float(r["mean_bp"]) + 4 * float(r["sd_bp"]) for _, r in rows]
+                + call_positions) + 5
     beyond = int((x_all > right).sum())
     off_scale = f"; {beyond:,} longer than {right:.0f} bp off-scale" if beyond else ""
 
@@ -647,8 +654,9 @@ def plot_gmm_itds(
         if x_all is not x:
             ax.hist(x_all, bins=edges, color="#d9d9d9", edgecolor="none",
                     label=f"All trimmed reads (n={len(x_all):,}{off_scale})")
-            ax.hist(x, bins=edges, color="#a6a6a6", edgecolor="none",
-                    label=f"Assigned to a peak (n={n:,})")
+            if n:
+                ax.hist(x, bins=edges, color="#a6a6a6", edgecolor="none",
+                        label=f"Assigned to a peak (n={n:,})")
         else:
             ax.hist(x, bins=edges, color="#bdbdbd", edgecolor="none",
                     label=f"Reads (n={n:,})")
@@ -660,11 +668,13 @@ def plot_gmm_itds(
         mid, half = (lo + hi) / 2, max((hi - lo) / 2, 10.0)
         zoom = (max(mid - half, edges[0]), min(mid + half, edges[-1]))
 
-    if zoom is None:
-        fig, axes = plt.subplots(1, 1, figsize=(10, 5), dpi=dpi, squeeze=False)
-    else:
-        fig, axes = plt.subplots(2, 1, figsize=(10, 9), dpi=dpi, squeeze=False,
-                                 gridspec_kw=dict(height_ratios=[1, 1.25]))
+    ratios = [1,1.25] if zoom is not None else [1]
+    height = 9 if zoom is not None else 5
+    if validated is not None:
+        ratios.append(max(.65,.2*len(calls)))
+        height += max(2, .6*len(calls))
+    fig, axes = plt.subplots(len(ratios),1,figsize=(11,height),dpi=dpi,squeeze=False,
+                             gridspec_kw=dict(height_ratios=ratios))
     top = axes[0, 0]
 
     # --- Full view ---
@@ -705,7 +715,7 @@ def plot_gmm_itds(
             last_x = mu
             info = (validated or {}).get(str(alias))
             if info:
-                text = f"{alias} · {info['itd_len']} bp\nAF {info['af'] * 100:.2f}% ({info['reads']:,} reads)"
+                text = f"{alias}\nfitted read length {mu:.1f} bp"
             elif not reported(alias):
                 text = f"{alias}\nnot reported"
             else:
@@ -734,6 +744,9 @@ def plot_gmm_itds(
         ax.set_title("ITD region (shaded above)", fontsize=10)
         ax.grid(alpha=0.3)
 
+    if validated is not None:
+        draw_call_panel(axes[-1,0], calls, wt_length=wt_reference_length,
+                        full_allele=True)
     fig.tight_layout()
 
     # --- Save ---
@@ -743,3 +756,4 @@ def plot_gmm_itds(
     logger.info(f"[plot_gmm_itds] Saved: {os.path.abspath(fname)}")
 
     mpl_logger.setLevel(prev_level)
+    return fname

@@ -141,7 +141,10 @@ final integration changes.
 Exact anchors miss some reads and exact recurrence misses noisy or rare alleles.
 This is a conservative supplement, not unrestricted recovery of every fragment
 peak. Complex events that cannot be represented as one pure insertion do not
-qualify. GMM plots and insertion pileups describe GMM-derived candidates; independent
-seed candidates are recorded in the consensus table, audit, reference FASTA,
+qualify. Read histograms, GMM curves and insertion pileups describe GMM-derived
+observations. The GMM and insertion-size plots now add final-call panels showing
+every reported sequence, including independent rescues and overlapping same-size
+alternatives, without fabricating fitted peaks or read histograms. Independent
+seed candidates are also recorded in the consensus table, audit, reference FASTA,
 validation support table, VCF and HTML. Default validation uses all trimmed reads;
 the optional `--validate-peak-reads-only` continues to restrict that read set.

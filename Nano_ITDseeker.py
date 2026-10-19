@@ -723,8 +723,6 @@ if __name__ == "__main__":
                             set(summary_df.get('ref_alias', pd.Series(dtype=str))))
         pd.DataFrame(observed_audit).to_csv(
             flt3_data_folder / f'{sample_name}_observed_haplotype_audit.tsv', sep='\t', index=False)
-    if summary_df.empty:
-        finalize_no_itd("No ITDs passed validation and allele-frequency filtering.")
 
     # Redraw the read-length plot now that validation has run. The first pass
     # (above) is drawn before any peak has been tested, so it necessarily shows
@@ -747,7 +745,11 @@ if __name__ == "__main__":
         reported_aliases=reported_aliases,
         validated=validated,
         all_read_lengths=all_read_lengths,
+        wt_reference_length=len(ref_seq),
     )
+    plot_itd_size_distribution(
+        insertions_df, flt3_data_folder, sample_name=sample_name,
+        validated=validated, reported_aliases=reported_aliases)
     dropped = [
         str(a) for a in comps["peak_alias"].astype(str)
         if a.upper() != "WT" and a not in reported_aliases
@@ -757,6 +759,8 @@ if __name__ == "__main__":
             "Peaks fitted but not reported (no validated support or below the "
             "allele-frequency threshold): %s", ", ".join(dropped),
         )
+    if summary_df.empty:
+        finalize_no_itd("No ITDs passed validation and allele-frequency filtering.")
 
     # Save VCF file with validated ITD calls
     logger.info("Writing validated ITD calls to VCF...")

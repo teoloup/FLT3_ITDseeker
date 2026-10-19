@@ -330,7 +330,23 @@ Same-size one-base junction alternatives remain separate sequence candidates wit
 an explicit HTML/audit warning and VCF `SEQUENCE_UNCERTAINTY` flag that separate biological clones are not established.
 Their competition can leave reads ambiguous; do not interpret their individual AFs
 as independently established clone fractions. Exact anchors and recurrence gates
-intentionally miss some real low-support or noisy haplotypes. The GMM plot describes
-GMM candidates; independent candidates appear in the consensus table, validation
-FASTA, audit, VCF and HTML. `--disable-observed-rescue` supports matched comparisons.
+intentionally miss some real low-support or noisy haplotypes. Both the GMM/read-length
+and insertion-size plots include a final-call panel after validation, showing every
+AF-filtered reported sequence with insertion size, AF and supporting reads. Same-size
+junction alternatives occupy separate rows. Read histograms and GMM curves retain
+their original observation/fit meanings; rescued calls do not receive invented
+Gaussian fits or insertion observation counts. The complete-allele coordinate is
+the actual WT reference length (336 bp) plus insertion size; the insertion plot
+uses WT = 0 inserted bases. Fitted read-length means can differ because reads carry
+trimming differences and sequencing errors. Plots also render when rescue supplies
+all candidates and no GMM insertion observations remain.
+
+Independent candidates also appear in the consensus table, validation FASTA, audit,
+VCF and HTML. `--disable-observed-rescue` supports matched comparisons.
 See `review/CONSENSUS_VALIDATION.md` and `review/benchmark_observed_rescue.py`.
+
+Saved-data previews: [all called peaks](FRAGMENT_DATA/recheck_20261019/called_peak_plot_previews.html).
+Regenerate them inside the project container using `python review/render_called_peak_plots.py`;
+this reuses retained fits and validation rather than repeating alignments. Production
+plots use the current refined GMM tables; these previews explicitly identify the
+retained original fit before denoising.

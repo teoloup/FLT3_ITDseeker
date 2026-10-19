@@ -36,6 +36,8 @@ FRAGMENT_DATA/recheck_20261019/*
 !FRAGMENT_DATA/recheck_20261019/recheck_summary.tsv
 !FRAGMENT_DATA/recheck_20261019/parameter_rerun_calls.tsv
 !FRAGMENT_DATA/recheck_20261019/manifest.json
+!FRAGMENT_DATA/recheck_20261019/called_peak_plot_previews.html
 review/fastq_51_57_analysis/
 review/observed_rescue_benchmark/
+review/observed_rescue_plots/
 review/*.log

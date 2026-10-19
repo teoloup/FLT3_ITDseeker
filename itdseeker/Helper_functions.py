@@ -15,6 +15,7 @@ from Bio import Align, SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from scipy.stats import fisher_exact
+from .call_plots import reported_calls, draw_call_panel
 logger = logging.getLogger(__name__)
 
 # Biopython 1.85 renamed these and warns on every use of the old names; an
@@ -514,9 +515,13 @@ def extract_itd_insertions_from_subset_parallel(
     df.sort_values(["ins_pos_ref", "ins_len", "read_id"], inplace=True, ignore_index=True)
     return df
 
-def plot_itd_size_distribution(all_itd_insertions, out_dir, sample_name=None, bins=50):
+def plot_itd_size_distribution(all_itd_insertions, out_dir, sample_name=None, bins=50,
+                               validated=None, reported_aliases=None):
     """
-    Plot histogram and KDE of putative ITD sizes across all reads/peaks.
+    Plot observed candidate insertions, plus final calls when supplied.
+
+    Final calls use insertion-size coordinates and occupy separate rows for
+    overlapping sequences. Their markers do not add histogram observations.
 
     Parameters
     ----------
@@ -528,39 +533,53 @@ def plot_itd_size_distribution(all_itd_insertions, out_dir, sample_name=None, bi
         Optional sample label for title and filename.
     bins : int
         Number of histogram bins.
+    validated : dict or None
+        Final {alias: {itd_len, af, reads}} calls; an empty dictionary shows that
+        no candidate passed reporting. None produces the discovery-only plot.
+    reported_aliases : set or None
+        Restrict final call markers to the same survivors as the report/VCF.
     """
-    if all_itd_insertions.empty:
+    if all_itd_insertions.empty and validated is None:
         logger.info("[plot_itd_size_distribution] No insertions found. Skipping plot.")
         return
 
-    plt.figure(figsize=(8, 5), dpi=150)
-
-    # --- Main histogram + KDE ---
-    # A constant-length peak has singular covariance: draw its histogram
-    # without KDE instead of aborting the variant-calling pipeline.
-    kde_ok = bool((all_itd_insertions.groupby("peak_alias")["ins_len"].nunique() > 1).all())
-    sns.histplot(
-        data=all_itd_insertions,
-        x="ins_len",
-        bins=bins,
-        hue="peak_alias",
-        multiple="stack",
-        kde=kde_ok,
-        alpha=0.6,
-        edgecolor=None,
-    )
+    calls = reported_calls(validated, reported_aliases)
+    if not all_itd_insertions.empty and 'peak_alias' not in all_itd_insertions:
+        all_itd_insertions=all_itd_insertions.assign(peak_alias='candidate')
+    peak_aliases = list(all_itd_insertions.get('peak_alias',pd.Series(dtype=str)).dropna().unique())
+    color_map = dict(zip(peak_aliases,sns.color_palette('husl',len(peak_aliases))))
+    final = validated is not None
+    fig, axes = plt.subplots(2 if final else 1,1,figsize=(11,5+max(2,.6*len(calls)) if final else 5),
+                             dpi=150,squeeze=False,
+                             gridspec_kw=dict(height_ratios=[1,max(.65,.2*len(calls))] if final else [1]))
+    ax=axes[0,0]
+    plt.sca(ax)
+    if all_itd_insertions.empty:
+        ax.text(.5,.5,'No per-read insertion observations from retained GMM candidates',
+                ha='center',va='center',transform=ax.transAxes)
+    else:
+        # A constant-length peak has singular covariance: omit KDE.
+        kde_ok = bool((all_itd_insertions.groupby("peak_alias")["ins_len"].nunique() > 1).all())
+        sns.histplot(
+            data=all_itd_insertions,
+            x="ins_len",
+            bins=bins,
+            hue="peak_alias",
+            palette=color_map,
+            multiple="stack",
+            kde=kde_ok,
+            alpha=0.6,
+            edgecolor=None,
+            ax=ax,
+        )
 
     plt.xlabel("Insertion length (bp)")
     plt.ylabel("Read count")
-    title = f"ITD insertion length distribution"
+    title = "Per-read insertion observations from GMM candidates"
     if sample_name:
         title += f" — Sample:{sample_name}"
     plt.title(title)
     # Add per-peak mean +/- SD overlays (not pooled across peaks)
-    peak_aliases = [p for p in all_itd_insertions["peak_alias"].dropna().unique()]
-    colors = sns.color_palette("husl", len(peak_aliases)) if peak_aliases else []
-    color_map = {alias: colors[i] for i, alias in enumerate(peak_aliases)}
-
     for alias in peak_aliases:
         peak_vals = all_itd_insertions.loc[all_itd_insertions["peak_alias"] == alias, "ins_len"]
         if peak_vals.empty:
@@ -570,13 +589,14 @@ def plot_itd_size_distribution(all_itd_insertions, out_dir, sample_name=None, bi
         sd_len = peak_vals.std()
         c = color_map[alias]
 
+        candidate_status = ' | candidate only' if final and str(alias) not in {a for a,_ in calls} else ''
         plt.axvline(
             mean_len,
             color=c,
             linestyle="--",
             lw=1.5,
             alpha=0.95,
-            label=f"{alias} mean={mean_len:.1f} (n={len(peak_vals)})"
+            label=f"{alias} observations: mean={mean_len:.1f}, n={len(peak_vals)}{candidate_status}"
         )
         if pd.notna(sd_len) and sd_len > 0:
             plt.axvspan(
@@ -593,14 +613,18 @@ def plot_itd_size_distribution(all_itd_insertions, out_dir, sample_name=None, bi
     for h, l in zip(handles, labels):
         if l not in dedup:
             dedup[l] = h
-    plt.legend(dedup.values(), dedup.keys())
-    plt.tight_layout()
+    if dedup:
+        ax.legend(dedup.values(), dedup.keys(),fontsize=7)
+    if final:
+        draw_call_panel(axes[1,0],calls)
+    fig.tight_layout()
 
     fname = os.path.join(out_dir, f"{sample_name or 'sample'}_itd_size_distribution.png")
-    plt.savefig(fname, dpi=150, bbox_inches="tight")
-    plt.close()
+    fig.savefig(fname, dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
     logger.info("[plot_itd_size_distribution] Saved: %s", os.path.abspath(fname))
+    return fname
 
 def build_itd_reference_per_peak(
     df_cons,
