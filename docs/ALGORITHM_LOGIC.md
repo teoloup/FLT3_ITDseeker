@@ -2,7 +2,7 @@
 
 This document explains the core workflow and the statistical/sequence-analysis principles used in `Nano_ITDseeker.py`.
 
-## 0) Overview in plain language
+## 0) Overview 
 
 An FLT3-ITD copies a stretch of the gene and inserts it right after the
 original, so a read from an ITD allele is longer than a wild-type (WT) read by
@@ -207,8 +207,7 @@ Why not trigger on `N`s:
 
 Limits:
 - Separation is not guaranteed. The mixed synthetic challenge with three 45 bp
-  haplotypes in one peak is still not fully resolved; see
-  `review/CONSENSUS_VALIDATION.md`.
+  haplotypes in one peak is still not fully resolved; 
 
 ### 2.5 Pairwise alignment for insertion detection
 
