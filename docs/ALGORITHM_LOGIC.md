@@ -2,6 +2,35 @@
 
 This document explains the core workflow and the statistical/sequence-analysis principles used in `Nano_ITDseeker.py`.
 
+## 0) Overview in plain language
+
+An FLT3-ITD copies a stretch of the gene and inserts it right after the
+original, so a read from an ITD allele is longer than a wild-type (WT) read by
+exactly the size of the duplication. The pipeline works in two phases.
+
+**Phase 1: propose candidates.** Several independent routes suggest which ITDs
+might be present:
+
+- the read-length distribution (one peak per ITD size, steps 2-4);
+- sequence clustering inside each length peak, which separates different ITDs
+  of the same or almost the same size (steps 3-4);
+- a search for the same exact insertion recurring in many reads, which does not
+  depend on the length peaks at all (step 5).
+
+Each candidate gets a consensus sequence (step 6). Uncertain candidates are
+dropped and duplicates are merged.
+
+**Phase 2: test candidates.** Every candidate becomes a full reference sequence
+(step 7). Every trimmed read is then aligned to WT and all candidates at once,
+and goes to the reference it fits clearly best, if any (step 8). The AF of an
+ITD is the share of reads it wins (step 9).
+
+The phases are deliberately separate. Phase 1 may over-propose: a spurious
+candidate wins few reads in phase 2 and is not reported. Phase 1 settings
+(`--min-gmm-fraction`, `--min-haplotype-reads`, `--min-observed-haplotype-reads`)
+decide what gets tested. Only `--min-allele-frequency` and `--min-itd-size`
+decide what gets reported.
+
 ## 1) Pipeline Logic (Step by Step)
 
 1. **Read extraction and primer trimming**
@@ -41,7 +70,21 @@ This document explains the core workflow and the statistical/sequence-analysis p
    - Each peak is therefore split again when its insertion lengths form a second group with at least `--min-haplotype-reads` reads and `--min-subpeak-fraction` of the insertions, 3 bp or more away, and with the count between the groups dropping to at most half of the smaller one.
    - Reads go to the nearest length group, reads without an insertion to the largest, and the insertion table is relabelled with the new `_H*` aliases. Skipped with `--haplotype-method none`.
 
-5. **Per-peak MSA and consensus, in reference context**
+5. **Independent discovery of recurrent observed insertions**
+   - This step runs on all trimmed reads before the length model, and does not use its peaks. It catches ITDs whose length peak is too small for the GMM (`--min-gmm-fraction`), ITDs hidden inside the WT peak, and sequences lost when a mixed peak gives an unresolved consensus.
+   - Each read is located by two 20 bp anchor sequences taken from the WT amplicon, near its two ends. On the 336 bp reference they are at [15,35) and [305,325). An anchor may match with up to 3 substitutions but no indels. A read with no match, or with more than one possible anchor pair, is skipped.
+   - The sequence between the anchors (the interior) is kept exactly as read. Anchor substitutions are replaced by WT and counted in the audit, so differences inside an anchor are not reported as variants.
+   - Reads with an identical interior that is longer than WT are counted together. A group becomes a candidate only if it has:
+     - at least `--min-observed-haplotype-reads` reads (default 20), with at least two on each strand;
+     - median base quality of at least Q20;
+     - a net size within `--min-itd-size` and `--max-itd-size`, and no unresolved bases;
+     - an exact explanation as one pure insertion into WT: placing the inserted sequence into WT must reproduce the whole interior. Extra deletions, substitutions or scattered gaps disqualify the group, so sequencing errors never become short insertion calls.
+   - How closely the insertion matches the adjacent WT copy is recorded as `DUP_IDENTITY` but is not a filter.
+   - Accepted candidates are compared with the consensus candidates of step 6 and dropped when they give the same full allele. All candidates together are capped at `--max-itds-to-detect`.
+   - Same-size candidates that differ by a single base at the junction are kept as separate sequences but flagged `SEQUENCE_UNCERTAINTY`: they may be one ITD written two ways, so their individual AFs are not clone sizes.
+   - Every group and the reason it was accepted or rejected is written to `<sample>_observed_haplotype_audit.tsv`. `--disable-observed-rescue` turns this step off; the `--observed-anchor-*` options change anchor length, position and mismatch allowance.
+
+6. **Per-peak MSA and consensus, in reference context**
    - Each read's insertion is placed back into the WT sequence at that read's insertion boundary, giving a full allele. Isolated insertion payloads can be cyclic rotations of the same duplication; aligning whole alleles keeps those together.
    - Alleles are deduplicated and weighted by abundance. The most abundant ones (up to `--msa-max-unique`, covering `--msa-min-weight-coverage` of reads) are aligned with MUSCLE5.
    - Only the varying part of each allele is aligned. In a tandem repeat an insertion can be written at a run of equivalent positions, and copies of one ITD share at least one of them even with sequencing errors in the insertion. The window is the narrowest span reaching such a position for 95% of the reads, plus 30 bp on each side, so a second ITD at another site widens it rather than being dropped. Outside it every allele is identical WT, so it is added back after alignment. This cuts MUSCLE's run time, which grows with sequence length. The few alleles that cannot place their insertion in the window are left out; at the real insertion they only carry gaps, which never vote on a base.
@@ -52,21 +95,24 @@ This document explains the core workflow and the statistical/sequence-analysis p
    - A per-ITD plot shows the insertion with 10 bp of WT each side: the per-base agreement, the consensus, and the most abundant aligned alleles with only their differences printed, so a recurrent second haplotype can be told apart from scattered sequencing errors.
    - Candidates whose consensus gives the same allele (insertion placed back into WT, so shifted representations match) are merged into the one with more reads. Identical references would make competitive validation call that ITD's reads ambiguous between them.
 
-6. **ITD reference construction**
+7. **ITD reference construction**
    - For each candidate, the consensus insertion is inserted into WT at the consensus boundary.
    - WT and all ITD references are written to a multi-reference FASTA for competitive validation.
 
-7. **Competitive validation alignment**
+8. **Competitive validation alignment**
    - Every primer-trimmed read is validated, not only those the GMM assigned to a peak. The GMM's job is to propose candidates; its narrow read windows (±2 SD, which a near-zero-width component can shrink to ±3 bp) dropped up to 12% of reads, more of them ITD than WT reads, and so biased AF low. `--validate-peak-reads-only` restores the earlier behaviour.
    - Each validation read is aligned to all references (WT + ITD references).
    - Scoring uses adjusted alignment score, softmax normalization, then best-vs-second-best comparison.
    - For multi-reference cases, z-score style normalization is used per read. A winner also needs a softmax margin of at least 0.05 over the runner-up; ties stay ambiguous.
    - Candidate ITD-supporting reads are additionally filtered by breakpoint/gap checks, which count both insertions and deletions in the ITD window.
 
-8. **Final quantification and reporting**
+9. **Final quantification and reporting**
    - ITD allele frequency is calculated from validated support reads.
    - Strand support is reported as per-ITD `plus,minus` counts.
    - Fisher exact test p-value for strand bias is reported in VCF INFO.
+   - Only ITDs with AF of at least `--min-allele-frequency` and size of at least `--min-itd-size` are reported.
+   - The main read-length plots are drawn at the end from the final read assignments, using each read's actual trimmed length: one panel with WT and all reported ITDs, and a zoom on the ITD reads. The earlier GMM fit is kept as a separate diagnostic.
+   - For each reported ITD, up to 100 distinct supporting reads are aligned and shown as a consensus plot. This is for review only and never changes a call.
    - Output includes VCF and optional HTML report/plots.
 
 ## 2) Core Principles
@@ -173,7 +219,7 @@ Each read is globally aligned to a target reference:
 
 ### 2.6 MSA and weighted consensus
 
-Per peak, alleles (the WT sequence carrying each read's insertion, trimmed to the window described in step 5) are aligned together:
+Per peak, alleles (the WT sequence carrying each read's insertion, trimmed to the window described in step 6) are aligned together:
 - Weighted input emphasizes recurrent sequences and reduces influence of single-read noise.
 - Consensus at each column is called by weighted support.
 - Columns with low support/coverage are called as `N`.
@@ -213,6 +259,7 @@ For each ITD:
 - **ITDs a few bp apart in one peak**: too close for the GMM, and DADA2 tolerates the length difference as indel noise. The insertion-length split (step 4) separates them when the minor ITD passes the guardrails. One below 20 reads or 15% of its peak is still absorbed into the major ITD, raising `max_minor_fraction`.
 - **Over-splitting peaks**: DADA2 can call a sequencing-error variant a separate ASV. `OMEGA_A`, `--min-haplotype-reads` and `--min-subpeak-fraction` guard against this. A spurious haplotype usually collects little validated support and is not reported, but check it when it carries many reads.
 - **Minor haplotype below the guardrails**: an ASV under 20 reads or 15% of its peak is folded into the largest haplotype, so a real low-level ITD sharing a length with a dominant one can be absorbed.
+- **Low-level ITD missed by both routes**: an ITD below `--min-gmm-fraction` gets no length peak, and the recurrence search (step 5) needs 20 identical interiors with both strands and Q20. Noisy reads rarely repeat exactly, so a real ITD with few or error-rich reads can still be missed.
 - **Poor validation separation**: references too similar or low-quality reads reduce best-vs-second-best margin.
 - **Strand imbalance artifacts**: primer/trimming or read-quality effects can mimic biology; compare with WT split.
 
