@@ -1,0 +1,382 @@
+<!doctype html><html><head><meta charset="utf-8"><title>FLT3 fragment peak recheck</title><style>
+body{font:15px/1.5 system-ui,sans-serif;color:#203442;margin:32px auto;max-width:1500px;padding:0 24px}h1,h2{color:#183b56}.lead{font-size:19px;max-width:1100px}.card{background:#edf4f7;padding:18px 24px;border-radius:10px;margin:20px 0}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;vertical-align:top;padding:10px;border-bottom:1px solid #d9e3e8}th{background:#183b56;color:white;position:sticky;top:0}tr:hover{background:#f1f7fa}input{padding:10px;width:400px;max-width:90%;margin:10px 0}.scroll{overflow:auto}img{max-width:100%;height:auto}code{background:#f1f4f6;padding:2px 5px}a{color:#096987}.small{font-size:13px;color:#586a75}
+</style></head><body><h1>FLT3 fragment peak recheck</h1><p class="small">19 October 2026 · 17 reviewed targets · 13 BAMs · original workbook preserved</p>
+<p class="lead">Sequence evidence supports the missed <b>11528 / 21 bp</b> population and <b>13462 / 45 bp</b> population. A separate 27 bp candidate in 10808 and a weak 27 bp candidate in 12156 differ from the marked fragment sizes. The remaining marked peaks lack a reproducible complete matching haplotype in these data.</p>
+<div class="card"><b>Sample swap applied:</b> Excel biological <b>11094 → BAM 11202</b> (21 bp major ITD); Excel biological <b>11202 → BAM 11094</b> (69 bp major ITD). The names in the first table column follow Excel. <b>Evidence wording:</b> sequence-supported means corroborated in the supplied sequencing data, without establishing independent DNA molecules or a clinical limit of detection.</div>
+<p><a href="FLT3_fragment_recheck.xlsx">Download the evidence workbook</a> · <a href="recheck_summary.tsv">Summary TSV</a> · <a href="manifest.json">Input mapping and workbook hash</a> · <a href="called_peak_plot_previews.html">Updated plots showing all final calls</a></p>
+<h2>Per-peak results</h2><p>Candidate AF uses the pipeline's competitive classification/gap checks and a validated/classified-read denominator. Exact full-haplotype counts are conservative anchor evidence. A blank AF means no qualifying complete target candidate was proposed.</p><input id="filter" placeholder="Filter by sample, size, or assessment" oninput="for(const r of document.querySelectorAll('#results tbody tr'))r.hidden=!r.textContent.toLowerCase().includes(this.value.toLowerCase())"><div class="scroll"><table class="dataframe" id="results">
+  <thead>
+    <tr style="text-align: right;">
+      <th>biological_sample</th>
+      <th>physical_file_sample</th>
+      <th>fragment_size_bp</th>
+      <th>fragment_AF</th>
+      <th>assessment</th>
+      <th>candidate_net_sizes_bp</th>
+      <th>exact_complete_haplotype_reads</th>
+      <th>validated_candidate_reads</th>
+      <th>candidate_AF</th>
+      <th>conclusion</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>10443</td>
+      <td>10443</td>
+      <td>62.40</td>
+      <td>1.23%</td>
+      <td>Not corroborated</td>
+      <td></td>
+      <td>0</td>
+      <td>—</td>
+      <td>—</td>
+      <td>No recurrent complete 62 bp haplotype. Apparent 62 bp alignment gaps are mostly portions of noisy larger-ITD reads.</td>
+    </tr>
+    <tr>
+      <td>10808</td>
+      <td>10808</td>
+      <td>28.78</td>
+      <td>1.65%</td>
+      <td>Off-size candidate</td>
+      <td>27</td>
+      <td>26</td>
+      <td>76</td>
+      <td>0.49%</td>
+      <td>A distinct 27 bp haplotype is supported, but this does not establish the marked 28.78 bp fragment peak as a 29 bp ITD.</td>
+    </tr>
+    <tr>
+      <td>10808</td>
+      <td>10808</td>
+      <td>36.64</td>
+      <td>1.00%</td>
+      <td>Not corroborated</td>
+      <td></td>
+      <td>0</td>
+      <td>—</td>
+      <td>—</td>
+      <td>No recurrent complete 36/37 bp haplotype. Isolated alignment gaps near this size occur on larger/complex reads.</td>
+    </tr>
+    <tr>
+      <td>10986</td>
+      <td>10986</td>
+      <td>22.13</td>
+      <td>1.26%</td>
+      <td>Not corroborated</td>
+      <td></td>
+      <td>0</td>
+      <td>—</td>
+      <td>—</td>
+      <td>No coherent complete haplotype near 22 bp; a few inconsistent insertion alignments are insufficient.</td>
+    </tr>
+    <tr>
+      <td>11046</td>
+      <td>11046</td>
+      <td>39.87</td>
+      <td>2.43%</td>
+      <td>Not corroborated</td>
+      <td></td>
+      <td>0</td>
+      <td>—</td>
+      <td>—</td>
+      <td>No recurrent complete 40 bp haplotype; very few reads even have the corresponding net size.</td>
+    </tr>
+    <tr>
+      <td>11046</td>
+      <td>11046</td>
+      <td>45.90</td>
+      <td>1.06%</td>
+      <td>Not corroborated</td>
+      <td></td>
+      <td>0</td>
+      <td>—</td>
+      <td>—</td>
+      <td>No recurrent complete 46 bp haplotype. Nearby length-tail reads do not share a reproducible sequence.</td>
+    </tr>
+    <tr>
+      <td>11094</td>
+      <td>11202</td>
+      <td>7.70</td>
+      <td>1.19%</td>
+      <td>Not corroborated</td>
+      <td></td>
+      <td>0</td>
+      <td>—</td>
+      <td>—</td>
+      <td>Corrected swap: biological 11094 uses BAM 11202. No coherent 8 bp haplotype.</td>
+    </tr>
+    <tr>
+      <td>11094</td>
+      <td>11202</td>
+      <td>11.39</td>
+      <td>0.51%</td>
+      <td>Not corroborated</td>
+      <td></td>
+      <td>0</td>
+      <td>—</td>
+      <td>—</td>
+      <td>Corrected swap: biological 11094 uses BAM 11202. No coherent 11/12/13 bp haplotype.</td>
+    </tr>
+    <tr>
+      <td>11202</td>
+      <td>11094</td>
+      <td>20.67</td>
+      <td>0.98%</td>
+      <td>Not corroborated</td>
+      <td></td>
+      <td>0</td>
+      <td>—</td>
+      <td>—</td>
+      <td>Swap control: biological 11202 uses BAM 11094, which carries the expected 69 bp major ITD. No coherent minor ~21 bp haplotype.</td>
+    </tr>
+    <tr>
+      <td>11339</td>
+      <td>11339</td>
+      <td>29.54</td>
+      <td>2.48%</td>
+      <td>Not corroborated</td>
+      <td></td>
+      <td>0</td>
+      <td>—</td>
+      <td>—</td>
+      <td>No recurrent complete 30 bp haplotype; isolated shorter gaps arise in larger-ITD/error-containing reads.</td>
+    </tr>
+    <tr>
+      <td>11528</td>
+      <td>11528</td>
+      <td>21.07</td>
+      <td>3.07%</td>
+      <td>Sequence-supported</td>
+      <td>21</td>
+      <td>117</td>
+      <td>278</td>
+      <td>2.49%</td>
+      <td>Coherent 21 bp insertion on both strands, confirmed competitively. The default GMM excludes almost all exact insertion-supporting reads.</td>
+    </tr>
+    <tr>
+      <td>11551</td>
+      <td>11551</td>
+      <td>4.24</td>
+      <td>1.13%</td>
+      <td>Not corroborated</td>
+      <td>3</td>
+      <td>4</td>
+      <td>—</td>
+      <td>—</td>
+      <td>No coherent 4 bp insertion haplotype. Short net gains form a broad sequencing-error background; lowering the size cutoff does not establish this peak.</td>
+    </tr>
+    <tr>
+      <td>12156</td>
+      <td>12156</td>
+      <td>28.45</td>
+      <td>1.02%</td>
+      <td>Weak off-size candidate</td>
+      <td>27</td>
+      <td>7</td>
+      <td>18</td>
+      <td>0.13%</td>
+      <td>A low-count 27 bp haplotype exists, below the marked ~28.45 bp size and much lower than fragment AF. Retain as a review candidate.</td>
+    </tr>
+    <tr>
+      <td>12156</td>
+      <td>12156</td>
+      <td>5.86</td>
+      <td>1.36%</td>
+      <td>Not corroborated</td>
+      <td></td>
+      <td>0</td>
+      <td>—</td>
+      <td>—</td>
+      <td>No coherent 6 bp insertion haplotype; short length gains occur without a reproducible complete sequence.</td>
+    </tr>
+    <tr>
+      <td>12445</td>
+      <td>12445</td>
+      <td>11.44</td>
+      <td>1.02%</td>
+      <td>Not corroborated</td>
+      <td></td>
+      <td>0</td>
+      <td>—</td>
+      <td>—</td>
+      <td>Additional below-minimum check: no recurrent complete 11/12 bp haplotype.</td>
+    </tr>
+    <tr>
+      <td>12807</td>
+      <td>12807</td>
+      <td>81.21</td>
+      <td>2.51%</td>
+      <td>Not corroborated</td>
+      <td></td>
+      <td>0</td>
+      <td>—</td>
+      <td>—</td>
+      <td>No anchored read has net insertion size near 81 bp and no coherent 81 bp candidate was found.</td>
+    </tr>
+    <tr>
+      <td>13462</td>
+      <td>13462</td>
+      <td>45.31</td>
+      <td>2.22%</td>
+      <td>Sequence-supported</td>
+      <td>45</td>
+      <td>88</td>
+      <td>211</td>
+      <td>0.96%</td>
+      <td>A 45 bp population occurs on both strands beside the known 48 bp ITD. Its two recurrent sequence forms differ by one junction base; this does not prove two biological ITD clones. In the baseline replay DADA2 separates a 227-read cluster, but its mixed 45 bp consensus has unresolved bases and is skipped.</td>
+    </tr>
+  </tbody>
+</table></div>
+<h2>Net-size profiles</h2><p>These measurements require both outer anchors. A small length tail alone does not demonstrate another ITD. Original BAM and permissive/production alignment tables are retained per sample.</p><img src="marked_peak_net_sizes.png" alt="Net insertion-size distributions at all fourteen marked fragment peaks">
+<h2>Parameter experiments</h2><div class="scroll"><table class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th>sample</th>
+      <th>mode</th>
+      <th>returncode</th>
+      <th>elapsed_seconds</th>
+      <th>vcf</th>
+      <th>position</th>
+      <th>insertion_length</th>
+      <th>AF</th>
+      <th>DP</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>11528</td>
+      <td>baseline</td>
+      <td>0</td>
+      <td>228.547743</td>
+      <td>FRAGMENT_DATA\recheck_20261019\11528\baseline_rerun\results\11528_baseline_FLT3_ITD_calls.vcf</td>
+      <td>28033986</td>
+      <td>159</td>
+      <td>0.12218</td>
+      <td>10460</td>
+    </tr>
+    <tr>
+      <td>11528</td>
+      <td>baseline</td>
+      <td>0</td>
+      <td>228.547743</td>
+      <td>FRAGMENT_DATA\recheck_20261019\11528\baseline_rerun\results\11528_baseline_FLT3_ITD_calls.vcf</td>
+      <td>28034101</td>
+      <td>36</td>
+      <td>0.01243</td>
+      <td>10460</td>
+    </tr>
+    <tr>
+      <td>11528</td>
+      <td>baseline</td>
+      <td>0</td>
+      <td>228.547743</td>
+      <td>FRAGMENT_DATA\recheck_20261019\11528\baseline_rerun\results\11528_baseline_FLT3_ITD_calls.vcf</td>
+      <td>28034113</td>
+      <td>33</td>
+      <td>0.00669</td>
+      <td>10460</td>
+    </tr>
+    <tr>
+      <td>11528</td>
+      <td>sensitive</td>
+      <td>0</td>
+      <td>397.966923</td>
+      <td>FRAGMENT_DATA\recheck_20261019\11528\sensitive_rerun\results\11528_review_FLT3_ITD_calls.vcf</td>
+      <td>28033986</td>
+      <td>159</td>
+      <td>0.11454</td>
+      <td>11158</td>
+    </tr>
+    <tr>
+      <td>11528</td>
+      <td>sensitive</td>
+      <td>0</td>
+      <td>397.966923</td>
+      <td>FRAGMENT_DATA\recheck_20261019\11528\sensitive_rerun\results\11528_review_FLT3_ITD_calls.vcf</td>
+      <td>28034118</td>
+      <td>21</td>
+      <td>0.02303</td>
+      <td>11158</td>
+    </tr>
+    <tr>
+      <td>11528</td>
+      <td>sensitive</td>
+      <td>0</td>
+      <td>397.966923</td>
+      <td>FRAGMENT_DATA\recheck_20261019\11528\sensitive_rerun\results\11528_review_FLT3_ITD_calls.vcf</td>
+      <td>28034101</td>
+      <td>36</td>
+      <td>0.01129</td>
+      <td>11158</td>
+    </tr>
+    <tr>
+      <td>11528</td>
+      <td>sensitive</td>
+      <td>0</td>
+      <td>397.966923</td>
+      <td>FRAGMENT_DATA\recheck_20261019\11528\sensitive_rerun\results\11528_review_FLT3_ITD_calls.vcf</td>
+      <td>28034113</td>
+      <td>33</td>
+      <td>0.00385</td>
+      <td>11158</td>
+    </tr>
+    <tr>
+      <td>11528</td>
+      <td>sensitive</td>
+      <td>0</td>
+      <td>397.966923</td>
+      <td>FRAGMENT_DATA\recheck_20261019\11528\sensitive_rerun\results\11528_review_FLT3_ITD_calls.vcf</td>
+      <td>28034125</td>
+      <td>24</td>
+      <td>0.00224</td>
+      <td>11158</td>
+    </tr>
+    <tr>
+      <td>11528</td>
+      <td>sensitive</td>
+      <td>0</td>
+      <td>397.966923</td>
+      <td>FRAGMENT_DATA\recheck_20261019\11528\sensitive_rerun\results\11528_review_FLT3_ITD_calls.vcf</td>
+      <td>28034137</td>
+      <td>36</td>
+      <td>0.00143</td>
+      <td>11158</td>
+    </tr>
+    <tr>
+      <td>13462</td>
+      <td>baseline</td>
+      <td>0</td>
+      <td>107.355007</td>
+      <td>FRAGMENT_DATA\recheck_20261019\13462\baseline_rerun\results\13462_baseline_FLT3_ITD_calls.vcf</td>
+      <td>28034089</td>
+      <td>48</td>
+      <td>0.02037</td>
+      <td>20424</td>
+    </tr>
+    <tr>
+      <td>13462</td>
+      <td>sensitive</td>
+      <td>0</td>
+      <td>235.454428</td>
+      <td>FRAGMENT_DATA\recheck_20261019\13462\sensitive_rerun\results\13462_review_FLT3_ITD_calls.vcf</td>
+      <td>28034089</td>
+      <td>48</td>
+      <td>0.01889</td>
+      <td>21919</td>
+    </tr>
+    <tr>
+      <td>13462</td>
+      <td>sensitive</td>
+      <td>0</td>
+      <td>235.454428</td>
+      <td>FRAGMENT_DATA\recheck_20261019\13462\sensitive_rerun\results\13462_review_FLT3_ITD_calls.vcf</td>
+      <td>28034079</td>
+      <td>39</td>
+      <td>0.00187</td>
+      <td>21919</td>
+    </tr>
+  </tbody>
+</table></div><ul><li>11528: <a href="11528/baseline_rerun/run.log">baseline log</a>; <a href="11528/baseline_rerun/command.json">exact command</a></li><li>11528: <a href="11528/sensitive_rerun/run.log">sensitive log</a>; <a href="11528/sensitive_rerun/command.json">exact command</a></li><li>13462: <a href="13462/baseline_rerun/run.log">baseline log</a>; <a href="13462/baseline_rerun/command.json">exact command</a></li><li>13462: <a href="13462/sensitive_rerun/run.log">sensitive log</a>; <a href="13462/sensitive_rerun/command.json">exact command</a></li></ul>
+<h2>Algorithm changes supported by this audit</h2><ol><li><b>Discover candidates before GMM exclusion.</b> 11528: 226/228 reads with the recurring 21-bp insertion are excluded by the default GMM; two are assigned to WT. Length clustering should propose candidates, not limit the sequence search.</li><li><b>Require consistent complete net length.</b> Several apparent small gaps occur on larger-ITD molecules. Confirm both outer flanks and the whole local haplotype, rather than interpreting one of multiple alignment gaps as an independent ITD.</li><li><b>Preserve sequence and breakpoint within each length.</b> 13462 has two recurrent 45-bp sequence forms, differing at one junction base, plus 48 bp. Length-only splitting cannot resolve this heterogeneity. Validate the supported full haplotypes and preserve uncertainty about the base difference rather than discard the shared insertion-length evidence.</li><li><b>Rescue and display unresolved candidate clusters.</b> 13462 already reaches a separate DADA2 cluster, but mixed 45-bp sequences yield an unresolved consensus that is skipped. Recluster the supported haplotypes and display rejected-candidate counts/ambiguity even when the remaining consensus has zero Ns.</li><li><b>Separate discovery thresholds from reporting thresholds.</b> A small clone beside a large peak can fail 15% of parent even with adequate total support. Use absolute read support and local error controls alongside global support; retain subthreshold candidates for review.</li><li><b>Add explicit short-insertion review mode.</b> For exploratory min size 3, WT tolerance must be &lt;3 (e.g.1); search the WT peak and rescue before the no-non-WT early exit. Blindly lowering min size increases short error calls; require reproducible sequence and a local background comparison.</li><li><b>Keep all eligible reads in final competition.</b> Use WT + known ITDs + read-supported candidates; report ambiguous/rejected counts and all-trimmed support as well as the classified-read AF denominator.</li><li><b>Do not treat every recurrent error haplotype as a clone.</b> Neighboring -1/-2 bp versions of large ITDs can recur and be strand-biased. Use net size, complete sequence, quality/strand controls, independent PCR evidence, and background rather than automatic acceptance.</li></ol>
+<h2>Methods and practical limits</h2><dl><dt><b>Scope</b></dt><dd>14 YES-marked rows across 11 biological samples, plus two unmarked below-12-bp peaks and a swapped-sample control: 17 targets, 13 BAMs.</dd><dt><b>Identity mapping</b></dt><dd>Excel biological 11094 -&gt; physical BAM/report 11202; Excel biological 11202 -&gt; physical BAM/report 11094. The 21/69-bp major calls verify the mapping; identity beyond the supplied swap annotation was not independently genotyped.</dd><dt><b>Input integrity</b></dt><dd>COMPARISON.xlsx was read only. SHA256: 23d8134f5ff54c942210b24538e5b30ab51fb9a203459e89e65c385d78c58f84</dd><dt><b>Runtime</b></dt><dd>Current workspace code mounted into local image teoloup/hematology-aml-flt3-itd:2.3; image ID sha256:c0f5c73116d5b67e9ea9056db8b6c7fc5e07880780a468b48d723b362a980ecd.</dd><dt><b>FASTQ provenance</b></dt><dd>No original per-sample FASTQs were supplied in FRAGMENT_DATA. Region and primer-trimmed FASTQs were regenerated from each corresponding BAM and retained under &lt;sample&gt;/fastq. They are the same underlying sequencing evidence, not an independent assay.</dd><dt><b>BAM selection</b></dt><dd>Use combined _2runs/_merged/_all where available; exclude _1/_5 dilution BAMs. Primary alignments and MAPQ &gt;=20 were inspected for CIGAR evidence.</dd><dt><b>Trimming</b></dt><dd>Cutadapt production primer settings, min read length 320 for discovery (default 330 replayed separately), maximum 666. All read IDs and qualities retained.</dd><dt><b>Discovery</b></dt><dd>Compare a permissive gapped aligner, production aligner, original BAM CIGARs, and exact outer-anchor net-size/haplotype evidence. No GMM or ASV gate is imposed on all-read discovery.</dd><dt><b>Outer anchors</b></dt><dd>WT[25:40] and WT[300:315], 0-based half-open. Window length in WT is 290 bp. Net insertion size is the complete observed window length minus 290, including all indels between anchors. Exact-anchor reads are a subset and their counts are conservative sequence evidence, not AF.</dd><dt><b>Candidate panel</b></dt><dd>Complete exact anchored haplotypes with &gt;=5 reads near target (+/-2.5 bp), up to three per target, plus known ITDs. Primary AF for the four candidate-bearing cases uses the clean panel. Extended diagnostic panels also contain recurrent neighboring error haplotypes; these are not accepted as biological ITDs.</dd><dt><b>Validation</b></dt><dd>Current pipeline competitive alignment and breakpoint-gap checks on every trimmed read, with sequence caching expanded back to every ID and original strand. AF denominator is validated/classified reads; support fraction using all trimmed reads is also provided.</dd><dt><b>Not corroborated</b></dt><dd>No reproducible full haplotype at the requested size in these data. This is not a calibrated negative test or proof of a fragment-analysis artifact. Tiny broad length tails and a few inconsistent reads are insufficient for confirmation.</dd><dt><b>Small insertions</b></dt><dd>Exploratory discovery includes insertions &gt;=3 bp and evaluates the below-minimum cases. None of the supplied below-12-bp targets is corroborated by a coherent full haplotype.</dd><dt><b>Parameter experiments</b></dt><dd>Baseline replay: current default discovery with min reporting AF=0.005. Sensitive replay: min AF .001, min GMM fraction .001, max SD 10, subpeak fraction .01, min haplotype reads 10, max ITDs 10, min read length 320, min ITD 3, WT tolerance 1. These are review experiments, not a validated production configuration.</dd><dt><b>Parameter results</b></dt><dd>11528: baseline reports 159,36,33 bp; sensitive settings add the supported 21-bp call at AF 2.303%, and additional low-level 24-bp/36-bp candidates. 13462: baseline reports only 48 bp; sensitive settings still skip the unresolved 45-bp population and add a 39-bp candidate at 0.187%. This demonstrates that broad parameter relaxation alone does not solve all missed calls; the additional candidates were not accepted automatically.</dd><dt><b>Limitations</b></dt><dd>One supplied sequencing dataset per case; no UMIs or independent extraction/PCR replicates established. Distinct read IDs do not establish distinct original DNA molecules. Fragment electropherograms/raw peak traces and the original pipeline commands were unavailable.</dd><dt><b>Shared allele</b></dt><dd>11528 21-bp allele matches the dominant 21-bp allele in 12156. This can reflect a recurrent hotspot allele; shared sequence alone cannot distinguish biological recurrence from cross-sample carryover.</dd><dt><b>13462 failure trace</b></dt><dd>Baseline DADA2 infers two ASVs from the 503-read ITD peak. The 227-read ITD_1_H2 cluster has 170 extracted 45-bp insertions, including 103 of one sequence and 56 of another. Its context consensus is unresolved and skipped. The ambiguity summary then reports 0 Ns because it summarizes only surviving candidates.</dd><dt><b>13462 sequence forms</b></dt><dd>The reconstructed 381-bp alleles differ at one base, T versus G at full-allele index 280. Their exact anchored supports are 57 reads (30+/27-) and 31 (15+/16-), with median base qualities 33 and 39 at that position. This supports the insertion-length population but does not establish whether the base difference is biological or technical.</dd><dt><b>13462 read fate</b></dt><dd>Of the 211 reads assigned to the 45-bp candidate forms by the focused competitive panel, the baseline replay classifies 176 as validated support for its 48-bp reference. Another 28 prefer that reference but fail gap checks; seven prefer WT but fail checks. Candidate loss therefore also reallocates support to the surviving ITD.</dd><dt><b>Small-gap example</b></dt><dd>In 11551 the production aligner finds 163 recurring GAGA insertions of 4 bp, but most linked reads have net gains of 12-18 bp, matching the 15-bp major ITD/error tail rather than a distinct 4-bp molecule. Recurrent alignment gaps alone can be misleading.</dd><dt><b>Coordinate convention</b></dt><dd>Genomic anchor = hg38 amplicon start 28033881 + 0-based insertion boundary - 1. Repeat-equivalent insertion representations may have shifted anchor/insert strings.</dd></dl>
+<p>Low fragment peaks can require sequence confirmation; nonspecific or pull-up CE peaks are also possible. This is why absent corroboration is not labeled a proven artifact. <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC1907323/">Original FLT3 capillary-electrophoresis validation study</a>.</p>
+</body></html>

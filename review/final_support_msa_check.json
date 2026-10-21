@@ -1,0 +1,56 @@
+{
+  "13462": {
+    "actual_html_per_card_unique_assets_verified": true,
+    "exact_final_support_membership_verified": true,
+    "calls": {
+      "ITD_1_H1": {
+        "total_support": 238,
+        "represented_reads": 179,
+        "distinct_sequences": 100,
+        "max_unique": 100
+      },
+      "ITD_OBS_7c96248a9a16": {
+        "total_support": 137,
+        "represented_reads": 131,
+        "distinct_sequences": 86,
+        "max_unique": 100
+      },
+      "ITD_OBS_dc12dbdced8d": {
+        "total_support": 74,
+        "represented_reads": 71,
+        "distinct_sequences": 48,
+        "max_unique": 100
+      }
+    }
+  },
+  "11528": {
+    "actual_html_per_card_unique_assets_verified": true,
+    "exact_final_support_membership_verified": true,
+    "calls": {
+      "ITD_2": {
+        "total_support": 1278,
+        "represented_reads": 418,
+        "distinct_sequences": 100,
+        "max_unique": 100
+      },
+      "ITD_OBS_1e9bf60eefba": {
+        "total_support": 278,
+        "represented_reads": 202,
+        "distinct_sequences": 100,
+        "max_unique": 100
+      },
+      "ITD_1_H1": {
+        "total_support": 128,
+        "represented_reads": 122,
+        "distinct_sequences": 86,
+        "max_unique": 100
+      },
+      "ITD_1_H2": {
+        "total_support": 58,
+        "represented_reads": 56,
+        "distinct_sequences": 41,
+        "max_unique": 100
+      }
+    }
+  }
+}
