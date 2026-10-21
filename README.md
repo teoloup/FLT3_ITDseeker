@@ -5,8 +5,7 @@ amplicon sequencing data. It takes an aligned BAM file, works out which ITDs are
 present, checks each one read by read, and reports its size, sequence, position
 and allele frequency (AF) in a VCF file and, if requested, an HTML report.
 
-## How it works, in plain language
-
+## How it works
 An FLT3-ITD is a piece of the gene copied and inserted right after the original.
 A read from an ITD allele is therefore longer than a wild-type (WT) read by
 exactly the size of the duplication. After the primers are trimmed, WT reads all
